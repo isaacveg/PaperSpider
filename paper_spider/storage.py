@@ -167,17 +167,6 @@ class PaperStorage:
             ).fetchone()
         return int(row["total"]) if row else 0
 
-    def get_missing_abstracts(self) -> List[dict]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT paper_id, title, detail_url FROM papers
-                WHERE conf = ? AND year = ? AND abstract_status = 0
-                """,
-                (self.conf_slug, self.year),
-            ).fetchall()
-        return [dict(row) for row in rows]
-
     def update_details(
         self,
         paper_id: str,
@@ -216,28 +205,6 @@ class PaperStorage:
                 ),
             )
 
-    def get_missing_pdfs(self) -> List[dict]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT paper_id, pdf_url FROM papers
-                WHERE conf = ? AND year = ? AND pdf_status = 0 AND pdf_url IS NOT NULL
-                """,
-                (self.conf_slug, self.year),
-            ).fetchall()
-        return [dict(row) for row in rows]
-
-    def list_papers_for_bibtex(self) -> List[dict]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT paper_id, title, detail_url, bibtex_url, bibtex FROM papers
-                WHERE conf = ? AND year = ?
-                """,
-                (self.conf_slug, self.year),
-            ).fetchall()
-        return [dict(row) for row in rows]
-
     def mark_pdf_downloaded(self, paper_id: str, pdf_path: str) -> None:
         now = str(int(time.time()))
         with self._connect() as conn:
@@ -266,18 +233,6 @@ class PaperStorage:
                 (now, paper_id),
             )
 
-    def save_bibtex(self, paper_id: str, bibtex: str) -> None:
-        now = str(int(time.time()))
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE papers
-                SET bibtex = ?, updated_at = ?
-                WHERE paper_id = ?
-                """,
-                (bibtex, now, paper_id),
-            )
-
     def mark_bib_exported(self, paper_id: str, bibtex: str, bib_path: str) -> None:
         now = str(int(time.time()))
         with self._connect() as conn:
@@ -301,24 +256,3 @@ class PaperStorage:
                 """,
                 (now, paper_id),
             )
-
-    def export_bibtex_files(self) -> int:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT paper_id, bibtex FROM papers
-                WHERE conf = ? AND year = ? AND bibtex IS NOT NULL
-                """,
-                (self.conf_slug, self.year),
-            ).fetchall()
-        count = 0
-        for row in rows:
-            paper_id = row["paper_id"]
-            bibtex = row["bibtex"]
-            if not bibtex:
-                continue
-            file_path = os.path.join(self.paths.bib_dir, f"{paper_id}.bib")
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(bibtex)
-            count += 1
-        return count

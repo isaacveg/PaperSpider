@@ -47,7 +47,6 @@ class SelectionResult:
 class DatasetEntry:
     conf_slug: str
     year: int
-    display_name: str
     path: Optional[str]
     is_existing: bool
 
@@ -184,7 +183,6 @@ class SettingsDialog(QDialog):
         entry = DatasetEntry(
             conf_slug=conf_slug,
             year=year,
-            display_name="New",
             path=None,
             is_existing=False,
         )
@@ -249,12 +247,10 @@ class SettingsDialog(QDialog):
                     continue
                 if year < YEAR_MIN or year > YEAR_MAX:
                     continue
-                display = f"{conf_map.get(conf_slug, conf_slug)} {year}"
                 datasets.append(
                     DatasetEntry(
                         conf_slug=conf_slug,
                         year=year,
-                        display_name=display,
                         path=year_path,
                         is_existing=True,
                     )

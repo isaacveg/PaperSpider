@@ -11,7 +11,6 @@ import os
 import re
 import subprocess
 import sys
-import re
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -226,6 +225,19 @@ class WorkspaceWindow(QMainWindow):
     def _log(self, message: str) -> None:
         self.log_view.append(message)
 
+    def _ensure_ready(self) -> bool:
+        if self.storage and self.conf:
+            return True
+        QMessageBox.warning(self, "Missing", "Please open Settings first.")
+        return False
+
+    def _start_worker(self, fn, on_done, on_error, *args) -> None:
+        worker = Worker(fn, *args)
+        worker.signals.log.connect(self._log)
+        worker.signals.finished.connect(on_done)
+        worker.signals.error.connect(on_error)
+        self.thread_pool.start(worker)
+
     def _refresh_status(self) -> None:
         if not self.conf or not self.storage:
             self.status_label.setText("No conference loaded. Click Settings.")
@@ -256,13 +268,15 @@ class WorkspaceWindow(QMainWindow):
         self._load_papers()
 
     def _fetch_list(self) -> None:
-        if not self.conf or not self.storage:
-            QMessageBox.warning(self, "Missing", "Please open Settings first.")
+        if not self._ensure_ready():
             return
-        worker = Worker(self._fetch_list_task, self.conf, self.storage)
-        worker.signals.finished.connect(self._on_fetch_done)
-        worker.signals.error.connect(self._on_abstracts_error)
-        self.thread_pool.start(worker)
+        self._start_worker(
+            self._fetch_list_task,
+            self._on_fetch_done,
+            self._on_worker_error,
+            self.conf,
+            self.storage,
+        )
         self._log("Fetching paper list...")
 
     def _fetch_list_task(self, conf, storage: PaperStorage, log=None) -> int:
@@ -298,7 +312,7 @@ class WorkspaceWindow(QMainWindow):
         configs = []
         for row in self.filter_rows:
             config = row.config()
-            if not config.value and config.enabled:
+            if not config.enabled or not config.value:
                 continue
             configs.append(config)
         return configs
@@ -367,7 +381,7 @@ class WorkspaceWindow(QMainWindow):
         self._log(f"Loaded {len(filtered)} papers")
 
     def _apply_filters(self, rows: List[dict]) -> List[dict]:
-        configs = [cfg for cfg in self._filter_configs() if cfg.enabled]
+        configs = self._filter_configs()
         if not configs:
             return rows
 
@@ -494,8 +508,7 @@ class WorkspaceWindow(QMainWindow):
             self.abstract_cancel_token.cancel()
             self._log("Canceling abstract download...")
             return
-        if not self.storage or not self.conf:
-            QMessageBox.warning(self, "Missing", "Please open Settings first.")
+        if not self._ensure_ready():
             return
         selected = self._selected_rows()
         if not selected:
@@ -504,25 +517,22 @@ class WorkspaceWindow(QMainWindow):
         self._download_abstracts_for_rows(selected)
 
     def _download_abstracts_for_rows(self, rows: List[dict]) -> None:
-        if not self.storage or not self.conf:
-            QMessageBox.warning(self, "Missing", "Please open Settings first.")
+        if not self._ensure_ready():
             return
         if self.abstract_cancel_token:
             QMessageBox.information(self, "Busy", "Abstract download already running.")
             return
         self.abstract_cancel_token = CancelToken()
         self.abstract_btn.setText("Cancel Download")
-        worker = Worker(
+        self._start_worker(
             self._download_abstracts_task,
+            self._on_abstracts_done,
+            self._on_abstracts_error,
             self.conf,
             self.storage,
             rows,
             self.abstract_cancel_token,
         )
-        worker.signals.log.connect(self._log)
-        worker.signals.finished.connect(self._on_abstracts_done)
-        worker.signals.error.connect(self._on_abstracts_error)
-        self.thread_pool.start(worker)
         self._log("Downloading abstracts...")
 
     def _download_abstracts_task(
@@ -577,8 +587,7 @@ class WorkspaceWindow(QMainWindow):
             self.pdf_cancel_token.cancel()
             self._log("Canceling PDF download...")
             return
-        if not self.storage or not self.conf:
-            QMessageBox.warning(self, "Missing", "Please open Settings first.")
+        if not self._ensure_ready():
             return
         selected = self._selected_rows()
         if not selected:
@@ -587,25 +596,22 @@ class WorkspaceWindow(QMainWindow):
         self._download_pdfs_for_rows(selected)
 
     def _download_pdfs_for_rows(self, rows: List[dict]) -> None:
-        if not self.storage or not self.conf:
-            QMessageBox.warning(self, "Missing", "Please open Settings first.")
+        if not self._ensure_ready():
             return
         if self.pdf_cancel_token:
             QMessageBox.information(self, "Busy", "PDF download already running.")
             return
         self.pdf_cancel_token = CancelToken()
         self.pdf_btn.setText("Cancel Download")
-        worker = Worker(
+        self._start_worker(
             self._download_pdfs_task,
+            self._on_pdfs_done,
+            self._on_pdfs_error,
             self.conf,
             self.storage,
             rows,
             self.pdf_cancel_token,
         )
-        worker.signals.log.connect(self._log)
-        worker.signals.finished.connect(self._on_pdfs_done)
-        worker.signals.error.connect(self._on_pdfs_error)
-        self.thread_pool.start(worker)
         self._log("Downloading PDFs...")
 
     def _download_pdfs_task(
@@ -658,8 +664,7 @@ class WorkspaceWindow(QMainWindow):
         self._load_papers()
 
     def _export_bibtex(self) -> None:
-        if not self.storage or not self.conf:
-            QMessageBox.warning(self, "Missing", "Please open Settings first.")
+        if not self._ensure_ready():
             return
         selected = self._selected_rows()
         if not selected:
@@ -668,14 +673,16 @@ class WorkspaceWindow(QMainWindow):
         self._export_bibtex_for_rows(selected)
 
     def _export_bibtex_for_rows(self, rows: List[dict]) -> None:
-        if not self.storage or not self.conf:
-            QMessageBox.warning(self, "Missing", "Please open Settings first.")
+        if not self._ensure_ready():
             return
-        worker = Worker(self._export_bibtex_task, self.conf, self.storage, rows)
-        worker.signals.log.connect(self._log)
-        worker.signals.finished.connect(self._on_bibtex_done)
-        worker.signals.error.connect(self._on_worker_error)
-        self.thread_pool.start(worker)
+        self._start_worker(
+            self._export_bibtex_task,
+            self._on_bibtex_done,
+            self._on_worker_error,
+            self.conf,
+            self.storage,
+            rows,
+        )
         self._log("Exporting bibtex...")
 
     def _export_bibtex_task(self, conf, storage: PaperStorage, rows: List[dict], log=None) -> int:
