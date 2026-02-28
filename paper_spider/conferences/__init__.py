@@ -5,8 +5,10 @@
 #     http://www.apache.org/licenses/LICENSE-2.0
 
 from .base import ConferenceBase
+from .iclr import IclrConference
+from .icml import IcmlConference
 from .neurips import NeuripsConference
 
 
 def available_conferences() -> list[ConferenceBase]:
-    return [NeuripsConference()]
+    return [NeuripsConference(), IcmlConference(), IclrConference()]

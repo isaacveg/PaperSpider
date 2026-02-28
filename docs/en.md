@@ -23,6 +23,7 @@ uv run paperspider
 
 - Click **Fetch paper list** to load or refresh the list for the selected conference/year.
 - The list is stored in SQLite so you can reopen it later.
+- Supported conferences: NeurIPS, ICML, ICLR.
 
 ### Add filters
 
@@ -50,6 +51,12 @@ uv run paperspider
   - If **No**, click the cell to download.
   - If **Yes**, double-click to copy to clipboard.
   - Ctrl+Click to reveal in folder.
+- **Export selected**:
+  - Open export dialog for selected papers.
+  - Formats: CSV, JSON, plain text list.
+  - For CSV/JSON you can select fields (title/authors/abstract).
+  - Plain text list exports one paper title per line.
+  - Generated content appears in a text box for select/copy, with a quick **Copy** button.
 - Use **Cancel Download** while downloads are running.
 
 ### Data layout
@@ -85,6 +92,12 @@ uv sync
 uv run paperspider
 ```
 
+4) Run tests:
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+```
+
 ### Build a double-clickable app
 
 macOS:
@@ -102,5 +115,5 @@ uv run --with pyinstaller pyinstaller --noconfirm --clean --windowed --name Pape
 ### Notes
 
 - The UI is built with PyQt6.
-- NeurIPS scraping lives in `paper_spider/conferences/neurips.py`.
+- Conference adapters live in `paper_spider/conferences/`.
 - Storage and schema are in `paper_spider/storage.py`.

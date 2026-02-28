@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
 from ..conferences import available_conferences
 from ..models import PaperMeta
 from ..storage import PaperStorage
+from .export_dialog import ExportDialog
 from .settings_dialog import SettingsDialog
 from .workers import CancelToken, Worker
 
@@ -179,10 +180,13 @@ class WorkspaceWindow(QMainWindow):
         self.pdf_btn.clicked.connect(self._download_pdfs)
         self.bib_btn = QPushButton("Export bibtex")
         self.bib_btn.clicked.connect(self._export_bibtex)
+        self.export_btn = QPushButton("Export selected")
+        self.export_btn.clicked.connect(self._open_export_dialog)
 
         action_layout.addWidget(self.abstract_btn)
         action_layout.addWidget(self.pdf_btn)
         action_layout.addWidget(self.bib_btn)
+        action_layout.addWidget(self.export_btn)
         layout.addLayout(action_layout)
 
         self.log_view = QTextEdit()
@@ -441,7 +445,7 @@ class WorkspaceWindow(QMainWindow):
             self._download_abstracts_for_rows([row])
         elif column == 4:
             pdf_path = row.get("pdf_path")
-            if modifiers == Qt.KeyboardModifier.ControlModifier and pdf_path:
+            if modifiers & Qt.KeyboardModifier.ControlModifier and pdf_path:
                 self._reveal_in_folder(pdf_path)
                 return
             if row.get("pdf_status") and pdf_path:
@@ -449,7 +453,7 @@ class WorkspaceWindow(QMainWindow):
             self._download_pdfs_for_rows([row])
         elif column == 5:
             bib_path = row.get("bib_path")
-            if modifiers == Qt.KeyboardModifier.ControlModifier and bib_path:
+            if modifiers & Qt.KeyboardModifier.ControlModifier and bib_path:
                 self._reveal_in_folder(bib_path)
                 return
             if bib_path:
@@ -502,6 +506,14 @@ class WorkspaceWindow(QMainWindow):
             if item and item.checkState() == Qt.CheckState.Checked:
                 selected.append(row)
         return selected
+
+    def _open_export_dialog(self) -> None:
+        selected = self._selected_rows()
+        if not selected:
+            QMessageBox.information(self, "Select", "Please select papers first.")
+            return
+        dialog = ExportDialog(selected, self)
+        dialog.exec()
 
     def _download_abstracts(self) -> None:
         if self.abstract_cancel_token:
@@ -701,7 +713,7 @@ class WorkspaceWindow(QMainWindow):
                 )
                 try:
                     bibtex = conf.fetch_bibtex(paper)
-                except Exception:  # noqa: BLE001
+                except RuntimeError:
                     bibtex = None
             if bibtex:
                 base_name = self._safe_filename(row.get("title") or "", row["paper_id"])

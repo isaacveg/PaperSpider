@@ -23,6 +23,7 @@ uv run paperspider
 
 - 点击 **Fetch paper list** 获取或刷新所选会议/年份的论文列表。
 - 论文列表保存在 SQLite 中，可随时重新打开。
+- 当前支持会议：NeurIPS、ICML、ICLR。
 
 ### 添加筛选条件
 
@@ -50,6 +51,12 @@ uv run paperspider
   - 若显示 **No**，点击单元格下载。
   - 若显示 **Yes**，双击复制到剪贴板。
   - Ctrl+单击定位到文件夹。
+- **Export selected**：
+  - 对已选论文打开导出弹窗。
+  - 格式支持 CSV、JSON、纯文本列表。
+  - CSV/JSON 可选择导出字段（title/authors/abstract）。
+  - 纯文本列表按一行一个标题导出。
+  - 生成内容显示在文本框中，可全选复制，并提供 **Copy** 按钮。
 - 下载过程中可点击 **Cancel Download** 取消。
 
 ### 数据结构
@@ -85,6 +92,12 @@ uv sync
 uv run paperspider
 ```
 
+4) 运行测试：
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+```
+
 ### 打包为可双击启动的应用
 
 macOS：
@@ -102,5 +115,5 @@ uv run --with pyinstaller pyinstaller --noconfirm --clean --windowed --name Pape
 ### 说明
 
 - UI 使用 PyQt6 构建。
-- NeurIPS 爬虫在 `paper_spider/conferences/neurips.py`。
+- 会议适配器位于 `paper_spider/conferences/`。
 - 存储与数据库结构在 `paper_spider/storage.py`。

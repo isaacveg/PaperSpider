@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Iterable, List
+from typing import List
 
 from ..models import PaperMeta
 
