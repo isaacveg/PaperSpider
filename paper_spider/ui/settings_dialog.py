@@ -214,7 +214,7 @@ class SettingsDialog(QDialog):
         trash_root = os.path.join(base_dir, ".trash")
         os.makedirs(trash_root, exist_ok=True)
         stamp = int(time.time())
-        name = os.path.basename(path)
+        name = os.path.relpath(path, base_dir).replace(os.sep, "_")
         dest = os.path.join(trash_root, f"{name}_{stamp}")
         try:
             shutil.move(path, dest)
@@ -227,14 +227,13 @@ class SettingsDialog(QDialog):
         datasets: List[DatasetEntry] = []
         if not os.path.isdir(base_dir):
             return datasets
-        conf_map = {conf.slug: conf.name for conf in self._conferences}
-        for conf_slug in os.listdir(base_dir):
+        for conf_slug in sorted(os.listdir(base_dir)):
             if conf_slug.startswith("."):
                 continue
             conf_path = os.path.join(base_dir, conf_slug)
             if not os.path.isdir(conf_path):
                 continue
-            for year_name in os.listdir(conf_path):
+            for year_name in sorted(os.listdir(conf_path), reverse=True):
                 year_path = os.path.join(conf_path, year_name)
                 if not os.path.isdir(year_path):
                     continue

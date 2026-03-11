@@ -3,6 +3,7 @@
 [English README](README.md) | [中文 文档](docs/zh.md) | [Documentation](docs/en.md)
 
 **最新动态**
+- 2026-03-11：新增 EMNLP 与 NSDI 会议适配器，并补充单元测试。
 - 2026-02-28：新增选中文章导出弹窗（CSV/JSON/纯文本列表），支持字段选择与一键复制。
 - 2026-02-28：新增 ICML 与 ICLR 会议适配器，并补充单元测试。
 - 2026-01-10：增加工作台优先流程、多条件筛选（Must/Should/Must not）、可取消下载、PDF/Bib 快捷操作与访问间隔设置。
@@ -11,7 +12,7 @@
 
 ## 功能
 
-- 会议适配器：NeurIPS、ICML、ICLR
+- 会议适配器：NeurIPS、ICML、ICLR、EMNLP、NSDI
 - 工作台式 UI 与论文筛选、选择
 - 筛选条件：Must/Should/Must not + 最小 Should 命中数
 - 摘要下载（悬浮预览；点击缺失项可下载）

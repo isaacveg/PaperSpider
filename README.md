@@ -3,6 +3,7 @@
 [中文 README](README.zh.md) | [Documentation](docs/en.md) | [中文 文档](docs/zh.md)
 
 **News**
+- 2026-03-11: Added EMNLP and NSDI conference adapters with unit tests.
 - 2026-02-28: Added selected-paper export dialog (CSV/JSON/plain list) with copy-ready output.
 - 2026-02-28: Added ICML and ICLR conference adapters with unit tests.
 - 2026-01-10: Added workspace-first flow, multi-filter (Must/Should/Must not), cancelable downloads, PDF/bib quick actions, and request interval setting.
@@ -11,7 +12,7 @@ A minimal PyQt app to fetch conference paper lists, download abstracts/PDFs, and
 
 ## Features
 
-- Conference adapters: NeurIPS, ICML, ICLR
+- Conference adapters: NeurIPS, ICML, ICLR, EMNLP, NSDI
 - Workspace UI with filters and selection
 - Filters: Must/Should/Must not + min-should-match
 - Abstract download (hover to preview; click to fetch missing)

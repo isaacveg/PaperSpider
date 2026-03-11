@@ -17,6 +17,8 @@ class ConferenceRegistryTests(unittest.TestCase):
         self.assertIn("neurips", slugs)
         self.assertIn("icml", slugs)
         self.assertIn("iclr", slugs)
+        self.assertIn("emnlp", slugs)
+        self.assertIn("nsdi", slugs)
 
 
 if __name__ == "__main__":

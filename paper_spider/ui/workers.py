@@ -26,10 +26,14 @@ class Worker(QRunnable):
         self.args = args
         self.kwargs = kwargs
         self.signals = WorkerSignals()
+        try:
+            self._accepts_log = "log" in inspect.signature(fn).parameters
+        except (TypeError, ValueError):
+            self._accepts_log = False
 
     def run(self) -> None:
         try:
-            if "log" in inspect.signature(self.fn).parameters:
+            if self._accepts_log:
                 result = self.fn(*self.args, **self.kwargs, log=self.signals.log.emit)
             else:
                 result = self.fn(*self.args, **self.kwargs)

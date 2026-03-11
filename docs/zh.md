@@ -23,7 +23,7 @@ uv run paperspider
 
 - 点击 **Fetch paper list** 获取或刷新所选会议/年份的论文列表。
 - 论文列表保存在 SQLite 中，可随时重新打开。
-- 当前支持会议：NeurIPS、ICML、ICLR。
+- 当前支持会议：NeurIPS、ICML、ICLR、EMNLP、NSDI。
 
 ### 添加筛选条件
 

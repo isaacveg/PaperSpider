@@ -11,7 +11,7 @@ import os
 import sqlite3
 import time
 from dataclasses import dataclass
-from typing import Iterable, List, Optional
+from typing import Any, Iterable, List, Optional
 
 from .models import PaperMeta
 
@@ -81,6 +81,88 @@ class PaperStorage:
         if name not in columns:
             conn.execute(f"ALTER TABLE papers ADD COLUMN {name} {definition}")
 
+    def _serialize_list(self, values: Iterable[Any]) -> str:
+        normalized = [str(value).strip() for value in values if str(value).strip()]
+        return json.dumps(normalized, ensure_ascii=True)
+
+    def _deserialize_list(self, raw: Any) -> List[str]:
+        if raw is None:
+            return []
+        if isinstance(raw, list):
+            return [str(item).strip() for item in raw if str(item).strip()]
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return []
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+            parts = [part.strip() for part in text.replace(";", ",").split(",")]
+            return [part for part in parts if part]
+        return [str(raw).strip()] if str(raw).strip() else []
+
+    def _normalize_row(self, row: dict) -> dict:
+        authors_list = self._deserialize_list(row.get("authors"))
+        keywords_list = self._deserialize_list(row.get("keywords"))
+        row["authors_list"] = authors_list
+        row["keywords_list"] = keywords_list
+        row["authors_text"] = ", ".join(authors_list)
+        row["keywords_text"] = ", ".join(keywords_list)
+        row["has_pdf"] = bool(row.get("pdf_status") and row.get("pdf_path"))
+        row["has_bib"] = bool(row.get("bib_path"))
+        return row
+
+    def reconcile_file_states(self, rows: Iterable[dict]) -> List[dict]:
+        normalized_rows = [self._normalize_row(dict(row)) for row in rows]
+        missing_pdf_ids: List[str] = []
+        missing_bib_ids: List[str] = []
+
+        for row in normalized_rows:
+            pdf_path = row.get("pdf_path")
+            pdf_available = bool(row.get("pdf_status")) and bool(pdf_path) and os.path.exists(pdf_path)
+            if row.get("pdf_status") and not pdf_available:
+                row["pdf_status"] = 0
+                row["pdf_path"] = None
+                missing_pdf_ids.append(row["paper_id"])
+            row["has_pdf"] = pdf_available
+
+            bib_path = row.get("bib_path")
+            bib_available = bool(bib_path) and os.path.exists(bib_path)
+            if bib_path and not bib_available:
+                row["bib_path"] = None
+                missing_bib_ids.append(row["paper_id"])
+            row["has_bib"] = bib_available
+
+        if missing_pdf_ids or missing_bib_ids:
+            now = str(int(time.time()))
+            with self._connect() as conn:
+                if missing_pdf_ids:
+                    conn.executemany(
+                        """
+                        UPDATE papers
+                        SET pdf_status = 0,
+                            pdf_path = NULL,
+                            updated_at = ?
+                        WHERE paper_id = ?
+                        """,
+                        [(now, paper_id) for paper_id in missing_pdf_ids],
+                    )
+                if missing_bib_ids:
+                    conn.executemany(
+                        """
+                        UPDATE papers
+                        SET bib_path = NULL,
+                            updated_at = ?
+                        WHERE paper_id = ?
+                        """,
+                        [(now, paper_id) for paper_id in missing_bib_ids],
+                    )
+
+        return normalized_rows
+
     def upsert_papers(self, papers: Iterable[PaperMeta]) -> int:
         now = str(int(time.time()))
         rows = []
@@ -93,9 +175,9 @@ class PaperStorage:
                     data["year"],
                     data["title"],
                     data["detail_url"],
-                    json.dumps(data["authors"], ensure_ascii=True),
+                    self._serialize_list(data["authors"]),
                     data["abstract"],
-                    json.dumps(data["keywords"], ensure_ascii=True),
+                    self._serialize_list(data["keywords"]),
                     data["pdf_url"],
                     None,
                     data["bibtex_url"],
@@ -117,9 +199,15 @@ class PaperStorage:
                 ON CONFLICT(paper_id) DO UPDATE SET
                     title=excluded.title,
                     detail_url=excluded.detail_url,
-                    authors=excluded.authors,
+                    authors=CASE
+                        WHEN excluded.authors = '[]' THEN papers.authors
+                        ELSE excluded.authors
+                    END,
                     abstract=COALESCE(excluded.abstract, papers.abstract),
-                    keywords=excluded.keywords,
+                    keywords=CASE
+                        WHEN excluded.keywords = '[]' THEN papers.keywords
+                        ELSE excluded.keywords
+                    END,
                     pdf_url=COALESCE(excluded.pdf_url, papers.pdf_url),
                     bibtex_url=COALESCE(excluded.bibtex_url, papers.bibtex_url),
                     bibtex=COALESCE(excluded.bibtex, papers.bibtex),
@@ -154,10 +242,7 @@ class PaperStorage:
         sql = f"SELECT * FROM papers WHERE {where_sql} ORDER BY title"
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
-        results = []
-        for row in rows:
-            results.append(dict(row))
-        return results
+        return [self._normalize_row(dict(row)) for row in rows]
 
     def count_papers(self) -> int:
         with self._connect() as conn:
@@ -177,14 +262,17 @@ class PaperStorage:
         bibtex_url: Optional[str],
         bibtex: Optional[str],
     ) -> None:
+        abstract_value = abstract.strip() if isinstance(abstract, str) and abstract.strip() else None
+        authors_value = self._serialize_list(authors) if authors else None
+        keywords_value = self._serialize_list(keywords) if keywords else None
         now = str(int(time.time()))
         with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE papers
-                SET abstract = ?,
-                    authors = ?,
-                    keywords = ?,
+                SET abstract = COALESCE(?, abstract),
+                    authors = COALESCE(?, authors),
+                    keywords = COALESCE(?, keywords),
                     pdf_url = COALESCE(?, pdf_url),
                     bibtex_url = COALESCE(?, bibtex_url),
                     bibtex = COALESCE(?, bibtex),
@@ -193,13 +281,13 @@ class PaperStorage:
                 WHERE paper_id = ?
                 """,
                 (
-                    abstract,
-                    json.dumps(authors, ensure_ascii=True),
-                    json.dumps(keywords, ensure_ascii=True),
+                    abstract_value,
+                    authors_value,
+                    keywords_value,
                     pdf_url,
                     bibtex_url,
                     bibtex,
-                    abstract,
+                    abstract_value,
                     now,
                     paper_id,
                 ),

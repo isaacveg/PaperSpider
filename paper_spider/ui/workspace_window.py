@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import subprocess
@@ -49,6 +48,62 @@ class FilterConfig:
     mode: str
     role: str
     value: str
+
+
+@dataclass
+class PaperLoadResult:
+    storage_key: str
+    all_rows: List[dict]
+    filtered_rows: List[dict]
+
+
+def _filter_paper_rows(
+    rows: List[dict],
+    configs: List[FilterConfig],
+    min_should_match: int,
+) -> List[dict]:
+    if not configs:
+        return list(rows)
+
+    must = [cfg for cfg in configs if cfg.role == "must"]
+    should = [cfg for cfg in configs if cfg.role == "should"]
+    must_not = [cfg for cfg in configs if cfg.role == "must not"]
+
+    def matches(row: dict, cfg: FilterConfig) -> bool:
+        value = cfg.value.lower()
+        title = (row.get("title") or "").lower()
+        abstract = (row.get("abstract") or "").lower()
+        authors = (row.get("authors_text") or "").lower()
+        keywords = (row.get("keywords_text") or "").lower()
+
+        if cfg.field == "title":
+            haystack = title
+        elif cfg.field == "authors":
+            haystack = authors
+        elif cfg.field == "abstract":
+            haystack = abstract
+        elif cfg.field == "keywords":
+            haystack = keywords
+        else:
+            haystack = " ".join([title, authors, abstract, keywords])
+
+        contains = value in haystack
+        if cfg.mode == "contains":
+            return contains
+        return not contains
+
+    filtered: List[dict] = []
+    for row in rows:
+        if any(matches(row, cfg) for cfg in must_not):
+            continue
+        if must and not all(matches(row, cfg) for cfg in must):
+            continue
+        if should and min_should_match > 0:
+            match_count = sum(1 for cfg in should if matches(row, cfg))
+            if match_count < min_should_match:
+                continue
+        filtered.append(row)
+    return filtered
 
 
 class FilterRow(QWidget):
@@ -100,15 +155,19 @@ class WorkspaceWindow(QMainWindow):
         self.base_dir: Optional[str] = None
         self.thread_pool = QThreadPool()
         self.available_conf_map = {conf.slug: conf for conf in available_conferences()}
+        self._all_rows: List[dict] = []
         self._current_rows: List[dict] = []
         self.filter_rows: List[FilterRow] = []
         self.abstract_cancel_token: Optional[CancelToken] = None
         self.pdf_cancel_token: Optional[CancelToken] = None
+        self._rows_loading = False
+        self._pending_row_reload = False
+        self._pending_row_refresh = False
         self.setWindowTitle("PaperSpider Workspace")
         self._build_ui()
         self._refresh_status()
         if self.storage:
-            self._load_papers()
+            self._load_papers(force_refresh=True)
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -134,17 +193,17 @@ class WorkspaceWindow(QMainWindow):
         filter_header = QHBoxLayout()
         add_filter_btn = QPushButton("Add filter")
         add_filter_btn.clicked.connect(self._add_filter)
-        apply_filter_btn = QPushButton("Apply filter")
-        apply_filter_btn.clicked.connect(self._load_papers)
-        clear_filter_btn = QPushButton("Clear filters")
-        clear_filter_btn.clicked.connect(self._clear_filters)
+        self.apply_filter_btn = QPushButton("Apply filter")
+        self.apply_filter_btn.clicked.connect(self._load_papers)
+        self.clear_filter_btn = QPushButton("Clear filters")
+        self.clear_filter_btn.clicked.connect(self._clear_filters)
         self.should_spin = QSpinBox()
         self.should_spin.setRange(0, 10)
         self.should_spin.setValue(0)
         self.should_spin.setToolTip("Require at least N 'Should' filters to match")
         filter_header.addWidget(add_filter_btn)
-        filter_header.addWidget(apply_filter_btn)
-        filter_header.addWidget(clear_filter_btn)
+        filter_header.addWidget(self.apply_filter_btn)
+        filter_header.addWidget(self.clear_filter_btn)
         filter_header.addWidget(QLabel("Min should match"))
         filter_header.addWidget(self.should_spin)
         filter_header.addStretch()
@@ -268,8 +327,9 @@ class WorkspaceWindow(QMainWindow):
         self.conf = conf
         self.base_dir = selection.base_dir
         self.storage = PaperStorage(self.base_dir, conf.slug, selection.year)
+        self._all_rows = []
         self._refresh_status()
-        self._load_papers()
+        self._load_papers(force_refresh=True)
 
     def _fetch_list(self) -> None:
         if not self._ensure_ready():
@@ -292,7 +352,7 @@ class WorkspaceWindow(QMainWindow):
         self._log(f"Loaded {count} papers")
         QMessageBox.information(self, "Done", f"Loaded {count} papers")
         self._refresh_status()
-        self._load_papers()
+        self._load_papers(force_refresh=True)
 
     def _add_filter(self) -> None:
         row = FilterRow()
@@ -321,118 +381,139 @@ class WorkspaceWindow(QMainWindow):
             configs.append(config)
         return configs
 
-    def _load_papers(self) -> None:
-        if not self.storage:
-            self.table.setRowCount(0)
-            self._current_rows = []
-            return
-        rows = self.storage.list_papers()
-        filtered = self._apply_filters(rows)
-        self._current_rows = filtered
-        self.table.setRowCount(0)
-        for row in filtered:
-            row_idx = self.table.rowCount()
-            self.table.insertRow(row_idx)
-            select_item = QTableWidgetItem()
-            select_item.setFlags(
-                select_item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled
-            )
-            select_item.setCheckState(Qt.CheckState.Unchecked)
-
-            authors = ", ".join(json.loads(row["authors"] or "[]"))
-            abstract_status = "Yes" if row["abstract_status"] else "No"
-            pdf_status_value = row.get("pdf_status") or 0
-            pdf_path = row.get("pdf_path")
-            if pdf_status_value and not pdf_path:
-                self.storage.mark_pdf_missing(row["paper_id"])
-                row["pdf_status"] = 0
-                row["pdf_path"] = None
-                pdf_status_value = 0
-            elif pdf_status_value and pdf_path and not os.path.exists(pdf_path):
-                self.storage.mark_pdf_missing(row["paper_id"])
-                row["pdf_status"] = 0
-                row["pdf_path"] = None
-                pdf_status_value = 0
-            pdf_status = "Yes" if pdf_status_value and pdf_path else "No"
-            bib_path = row.get("bib_path")
-            if bib_path and not os.path.exists(bib_path):
-                self.storage.mark_bib_missing(row["paper_id"])
-                row["bib_path"] = None
-                bib_path = None
-            bib_status = "Yes" if bib_path else "No"
-            self.table.setItem(row_idx, 0, select_item)
-            self.table.setItem(row_idx, 1, QTableWidgetItem(row["title"]))
-            self.table.setItem(row_idx, 2, QTableWidgetItem(authors))
-            abstract_item = QTableWidgetItem(abstract_status)
-            if row["abstract_status"]:
-                abstract_text = row.get("abstract") or ""
-                abstract_item.setToolTip(abstract_text)
-            else:
-                abstract_item.setToolTip("Click to download abstract")
-            self.table.setItem(row_idx, 3, abstract_item)
-            pdf_item = QTableWidgetItem(pdf_status)
-            if pdf_path:
-                pdf_item.setToolTip(f"Double-click to open\nCtrl+Click to reveal\n{pdf_path}")
-            else:
-                pdf_item.setToolTip("Click to download PDF")
-            self.table.setItem(row_idx, 4, pdf_item)
-            bib_item = QTableWidgetItem(bib_status)
-            if bib_path:
-                bib_item.setToolTip(f"Double-click to copy bibtex\nCtrl+Click to reveal\n{bib_path}")
-            else:
-                bib_item.setToolTip("Click to download bibtex")
-            self.table.setItem(row_idx, 5, bib_item)
-        self._log(f"Loaded {len(filtered)} papers")
-
-    def _apply_filters(self, rows: List[dict]) -> List[dict]:
+    def _current_filter_state(self) -> tuple[List[FilterConfig], int]:
         configs = self._filter_configs()
-        if not configs:
-            return rows
-
-        must = [cfg for cfg in configs if cfg.role == "must"]
-        should = [cfg for cfg in configs if cfg.role == "should"]
-        must_not = [cfg for cfg in configs if cfg.role == "must not"]
-        should_count = len(should)
+        should_count = sum(1 for cfg in configs if cfg.role == "should")
         self.should_spin.setRange(0, should_count)
         if self.should_spin.value() > should_count:
             self.should_spin.setValue(should_count)
-        min_should_match = self.should_spin.value()
+        return configs, self.should_spin.value()
 
-        def matches(row: dict, cfg: FilterConfig) -> bool:
-            value = cfg.value.lower()
-            title = (row.get("title") or "").lower()
-            abstract = (row.get("abstract") or "").lower()
-            authors = ", ".join(json.loads(row.get("authors") or "[]")).lower()
-            keywords = ", ".join(json.loads(row.get("keywords") or "[]")).lower()
+    def _set_rows_loading(self, loading: bool, message: Optional[str] = None) -> None:
+        self._rows_loading = loading
+        self.table.setEnabled(not loading)
+        self.fetch_btn.setEnabled(not loading and self.conf is not None and self.storage is not None)
+        self.apply_filter_btn.setEnabled(not loading)
+        self.clear_filter_btn.setEnabled(not loading)
+        self.abstract_btn.setEnabled(not loading)
+        self.pdf_btn.setEnabled(not loading)
+        self.bib_btn.setEnabled(not loading)
+        self.export_btn.setEnabled(not loading)
+        if loading:
+            self.status_label.setText(message or "Loading papers...")
+        else:
+            self._refresh_status()
 
-            if cfg.field == "title":
-                haystack = title
-            elif cfg.field == "authors":
-                haystack = authors
-            elif cfg.field == "abstract":
-                haystack = abstract
-            elif cfg.field == "keywords":
-                haystack = keywords
-            else:
-                haystack = " ".join([title, authors, abstract, keywords])
+    def _load_papers(self, force_refresh: bool = False) -> None:
+        if not self.storage:
+            self._all_rows = []
+            self.table.setRowCount(0)
+            self._current_rows = []
+            return
+        if self._rows_loading:
+            self._pending_row_reload = True
+            self._pending_row_refresh = self._pending_row_refresh or force_refresh
+            return
 
-            contains = value in haystack
-            if cfg.mode == "contains":
-                return contains
-            return not contains
+        configs, min_should_match = self._current_filter_state()
+        cached_rows = None if force_refresh or not self._all_rows else self._all_rows
+        action = "Loading papers..." if cached_rows is None else "Applying filters..."
+        self._set_rows_loading(True, action)
+        self._start_worker(
+            self._load_papers_task,
+            self._on_load_papers_done,
+            self._on_load_papers_error,
+            self.storage,
+            cached_rows,
+            configs,
+            min_should_match,
+        )
 
-        filtered = []
-        for row in rows:
-            if any(matches(row, cfg) for cfg in must_not):
-                continue
-            if must and not all(matches(row, cfg) for cfg in must):
-                continue
-            if should and min_should_match > 0:
-                match_count = sum(1 for cfg in should if matches(row, cfg))
-                if match_count < min_should_match:
-                    continue
-            filtered.append(row)
-        return filtered
+    def _load_papers_task(
+        self,
+        storage: PaperStorage,
+        cached_rows: Optional[List[dict]],
+        configs: List[FilterConfig],
+        min_should_match: int,
+        log=None,
+    ) -> PaperLoadResult:
+        all_rows = cached_rows
+        if all_rows is None:
+            all_rows = storage.reconcile_file_states(storage.list_papers())
+        filtered_rows = _filter_paper_rows(all_rows, configs, min_should_match)
+        return PaperLoadResult(
+            storage_key=storage.paths.db_path,
+            all_rows=all_rows,
+            filtered_rows=filtered_rows,
+        )
+
+    def _render_rows(self, rows: List[dict]) -> None:
+        self._current_rows = rows
+        self.table.setUpdatesEnabled(False)
+        try:
+            self.table.clearContents()
+            self.table.setRowCount(len(rows))
+            for row_idx, row in enumerate(rows):
+                select_item = QTableWidgetItem()
+                select_item.setFlags(
+                    select_item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled
+                )
+                select_item.setCheckState(Qt.CheckState.Unchecked)
+
+                authors = row.get("authors_text") or ""
+                abstract_status = "Yes" if row["abstract_status"] else "No"
+                pdf_path = row.get("pdf_path")
+                bib_path = row.get("bib_path")
+                pdf_status = "Yes" if row.get("has_pdf") else "No"
+                bib_status = "Yes" if row.get("has_bib") else "No"
+                self.table.setItem(row_idx, 0, select_item)
+                self.table.setItem(row_idx, 1, QTableWidgetItem(row["title"]))
+                self.table.setItem(row_idx, 2, QTableWidgetItem(authors))
+                abstract_item = QTableWidgetItem(abstract_status)
+                if row["abstract_status"]:
+                    abstract_text = row.get("abstract") or ""
+                    abstract_item.setToolTip(abstract_text)
+                else:
+                    abstract_item.setToolTip("Click to download abstract")
+                self.table.setItem(row_idx, 3, abstract_item)
+                pdf_item = QTableWidgetItem(pdf_status)
+                if pdf_path:
+                    pdf_item.setToolTip(f"Double-click to open\nCtrl+Click to reveal\n{pdf_path}")
+                else:
+                    pdf_item.setToolTip("Click to download PDF")
+                self.table.setItem(row_idx, 4, pdf_item)
+                bib_item = QTableWidgetItem(bib_status)
+                if bib_path:
+                    bib_item.setToolTip(f"Double-click to copy bibtex\nCtrl+Click to reveal\n{bib_path}")
+                else:
+                    bib_item.setToolTip("Click to download bibtex")
+                self.table.setItem(row_idx, 5, bib_item)
+        finally:
+            self.table.setUpdatesEnabled(True)
+
+    def _finish_pending_row_load(self) -> None:
+        if not self._pending_row_reload:
+            return
+        force_refresh = self._pending_row_refresh
+        self._pending_row_reload = False
+        self._pending_row_refresh = False
+        self._load_papers(force_refresh=force_refresh)
+
+    def _on_load_papers_done(self, result: PaperLoadResult) -> None:
+        self._set_rows_loading(False)
+        if not self.storage or result.storage_key != self.storage.paths.db_path:
+            self._finish_pending_row_load()
+            return
+        self._all_rows = result.all_rows
+        self._render_rows(result.filtered_rows)
+        self._log(f"Showing {len(result.filtered_rows)} of {len(result.all_rows)} papers")
+        self._finish_pending_row_load()
+
+    def _on_load_papers_error(self, message: str) -> None:
+        self._set_rows_loading(False)
+        QMessageBox.critical(self, "Error", message)
+        self._log(f"Error: {message}")
+        self._finish_pending_row_load()
 
     def _on_table_clicked(self, row_idx: int, column: int) -> None:
         if row_idx >= len(self._current_rows):
@@ -592,7 +673,7 @@ class WorkspaceWindow(QMainWindow):
             QMessageBox.information(self, "Canceled", f"Downloaded {count} abstracts")
         else:
             QMessageBox.information(self, "Done", f"Downloaded {count} abstracts")
-        self._load_papers()
+        self._load_papers(force_refresh=True)
 
     def _download_pdfs(self) -> None:
         if self.pdf_cancel_token:
@@ -673,7 +754,7 @@ class WorkspaceWindow(QMainWindow):
             QMessageBox.information(self, "Canceled", f"Downloaded {count} PDFs")
         else:
             QMessageBox.information(self, "Done", f"Downloaded {count} PDFs")
-        self._load_papers()
+        self._load_papers(force_refresh=True)
 
     def _export_bibtex(self) -> None:
         if not self._ensure_ready():
@@ -735,7 +816,7 @@ class WorkspaceWindow(QMainWindow):
 
     def _on_bibtex_done(self, count: int) -> None:
         QMessageBox.information(self, "Done", f"Exported {count} bibtex files")
-        self._load_papers()
+        self._load_papers(force_refresh=True)
 
     def _on_worker_error(self, message: str) -> None:
         QMessageBox.critical(self, "Error", message)
