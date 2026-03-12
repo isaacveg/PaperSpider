@@ -23,7 +23,7 @@ uv run paperspider
 
 - Click **Fetch paper list** to load or refresh the list for the selected conference/year.
 - The list is stored in SQLite so you can reopen it later.
-- Supported conferences: NeurIPS, ICML, ICLR, EMNLP, NSDI.
+- Supported conferences: NeurIPS, ICML, ICLR, CVPR, EMNLP, ACL, NAACL, SIGCOMM, NSDI, OSDI, ATC.
 
 ### Add filters
 

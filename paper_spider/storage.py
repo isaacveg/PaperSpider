@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Optional
 
-from .models import PaperMeta
+from .models import PaperCategory, PaperMeta
 
 
 @dataclass
@@ -54,6 +54,8 @@ class PaperStorage:
                     paper_id TEXT PRIMARY KEY,
                     conf TEXT NOT NULL,
                     year INTEGER NOT NULL,
+                    track TEXT NOT NULL DEFAULT 'main',
+                    paper_type TEXT NOT NULL DEFAULT 'conference',
                     title TEXT NOT NULL,
                     detail_url TEXT,
                     authors TEXT,
@@ -72,6 +74,8 @@ class PaperStorage:
             )
             self._ensure_column(conn, "bib_path", "TEXT")
             self._ensure_column(conn, "pdf_path", "TEXT")
+            self._ensure_column(conn, "track", "TEXT NOT NULL DEFAULT 'main'")
+            self._ensure_column(conn, "paper_type", "TEXT NOT NULL DEFAULT 'conference'")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_conf_year ON papers(conf, year)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_title ON papers(title)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_authors ON papers(authors)")
@@ -111,6 +115,11 @@ class PaperStorage:
         row["keywords_list"] = keywords_list
         row["authors_text"] = ", ".join(authors_list)
         row["keywords_text"] = ", ".join(keywords_list)
+        category = PaperCategory.from_fields(row.get("track"), row.get("paper_type"))
+        row["category"] = category
+        row["track"] = category.track
+        row["paper_type"] = category.paper_type
+        row["category_text"] = category.label
         row["has_pdf"] = bool(row.get("pdf_status") and row.get("pdf_path"))
         row["has_bib"] = bool(row.get("bib_path"))
         return row
@@ -173,6 +182,8 @@ class PaperStorage:
                     data["paper_id"],
                     data["conf"],
                     data["year"],
+                    data["track"],
+                    data["paper_type"],
                     data["title"],
                     data["detail_url"],
                     self._serialize_list(data["authors"]),
@@ -193,10 +204,12 @@ class PaperStorage:
             conn.executemany(
                 """
                 INSERT INTO papers (
-                    paper_id, conf, year, title, detail_url, authors, abstract, keywords,
+                    paper_id, conf, year, track, paper_type, title, detail_url, authors, abstract, keywords,
                     pdf_url, pdf_path, bibtex_url, bibtex, abstract_status, pdf_status, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(paper_id) DO UPDATE SET
+                    track=excluded.track,
+                    paper_type=excluded.paper_type,
                     title=excluded.title,
                     detail_url=excluded.detail_url,
                     authors=CASE

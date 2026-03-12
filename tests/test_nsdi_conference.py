@@ -48,6 +48,8 @@ class NsdiConferenceTests(unittest.TestCase):
         self.assertEqual(1, len(papers))
         self.assertEqual("du", papers[0].paper_id)
         self.assertEqual("PRED", papers[0].title)
+        self.assertEqual("technical", papers[0].track)
+        self.assertEqual("conference", papers[0].paper_type)
         self.assertEqual(["Alice", "Bob", "Carol"], papers[0].authors)
         self.assertEqual("Datacenter abstract.", papers[0].abstract)
 

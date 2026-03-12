@@ -4,10 +4,10 @@
 # You may obtain a copy of the License at
 #     http://www.apache.org/licenses/LICENSE-2.0
 
-from .family_base import UsenixFamilyBase
+from .family_base import CvfOpenAccessFamilyBase
 
 
-class NsdiConference(UsenixFamilyBase):
-    name = "NSDI"
-    slug = "nsdi"
-    conf_prefix = "nsdi"
+class CvprConference(CvfOpenAccessFamilyBase):
+    name = "CVPR"
+    slug = "cvpr"
+    conf_code = "CVPR"

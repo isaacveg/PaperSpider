@@ -4,10 +4,10 @@
 # You may obtain a copy of the License at
 #     http://www.apache.org/licenses/LICENSE-2.0
 
-from .family_base import UsenixFamilyBase
+from .family_base import SigcommProgramFamilyBase
 
 
-class NsdiConference(UsenixFamilyBase):
-    name = "NSDI"
-    slug = "nsdi"
-    conf_prefix = "nsdi"
+class SigcommConference(SigcommProgramFamilyBase):
+    name = "SIGCOMM"
+    slug = "sigcomm"
+    site_slug = "sigcomm"

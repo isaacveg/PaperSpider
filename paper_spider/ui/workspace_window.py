@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..conferences import available_conferences
-from ..models import PaperMeta
+from ..models import PaperCategory, PaperMeta
 from ..storage import PaperStorage
 from .export_dialog import ExportDialog
 from .settings_dialog import SettingsDialog
@@ -72,6 +72,7 @@ def _filter_paper_rows(
     def matches(row: dict, cfg: FilterConfig) -> bool:
         value = cfg.value.lower()
         title = (row.get("title") or "").lower()
+        category = (row.get("category_text") or "").lower()
         abstract = (row.get("abstract") or "").lower()
         authors = (row.get("authors_text") or "").lower()
         keywords = (row.get("keywords_text") or "").lower()
@@ -80,12 +81,14 @@ def _filter_paper_rows(
             haystack = title
         elif cfg.field == "authors":
             haystack = authors
+        elif cfg.field == "category":
+            haystack = category
         elif cfg.field == "abstract":
             haystack = abstract
         elif cfg.field == "keywords":
             haystack = keywords
         else:
-            haystack = " ".join([title, authors, abstract, keywords])
+            haystack = " ".join([title, category, authors, abstract, keywords])
 
         contains = value in haystack
         if cfg.mode == "contains":
@@ -116,7 +119,7 @@ class FilterRow(QWidget):
         self.enable_checkbox.setChecked(True)
 
         self.field_combo = QComboBox()
-        self.field_combo.addItems(["All", "Title", "Authors", "Abstract", "Keywords"])
+        self.field_combo.addItems(["All", "Title", "Category", "Authors", "Abstract", "Keywords"])
 
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["contains", "not contains"])
@@ -210,9 +213,9 @@ class WorkspaceWindow(QMainWindow):
         layout.addLayout(filter_header)
         layout.addWidget(filter_container)
 
-        self.table = QTableWidget(0, 6)
+        self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
-            ["Select", "Title", "Authors", "Abstract", "PDF", "Bibtex"]
+            ["Select", "Title", "Category", "Authors", "Abstract", "PDF", "Bibtex"]
         )
         self.table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.table)
@@ -287,6 +290,21 @@ class WorkspaceWindow(QMainWindow):
 
     def _log(self, message: str) -> None:
         self.log_view.append(message)
+
+    def _paper_from_row(self, row: dict, conf_slug: str, year: int) -> PaperMeta:
+        category = row.get("category")
+        if not isinstance(category, PaperCategory):
+            category = PaperCategory.from_fields(row.get("track"), row.get("paper_type"))
+        return PaperMeta(
+            paper_id=row["paper_id"],
+            title=row.get("title") or "",
+            conf=conf_slug,
+            year=year,
+            category=category,
+            detail_url=row.get("detail_url"),
+            pdf_url=row.get("pdf_url"),
+            bibtex_url=row.get("bibtex_url"),
+        )
 
     def _ensure_ready(self) -> bool:
         if self.storage and self.conf:
@@ -468,26 +486,27 @@ class WorkspaceWindow(QMainWindow):
                 bib_status = "Yes" if row.get("has_bib") else "No"
                 self.table.setItem(row_idx, 0, select_item)
                 self.table.setItem(row_idx, 1, QTableWidgetItem(row["title"]))
-                self.table.setItem(row_idx, 2, QTableWidgetItem(authors))
+                self.table.setItem(row_idx, 2, QTableWidgetItem(row.get("category_text") or ""))
+                self.table.setItem(row_idx, 3, QTableWidgetItem(authors))
                 abstract_item = QTableWidgetItem(abstract_status)
                 if row["abstract_status"]:
                     abstract_text = row.get("abstract") or ""
                     abstract_item.setToolTip(abstract_text)
                 else:
                     abstract_item.setToolTip("Click to download abstract")
-                self.table.setItem(row_idx, 3, abstract_item)
+                self.table.setItem(row_idx, 4, abstract_item)
                 pdf_item = QTableWidgetItem(pdf_status)
                 if pdf_path:
                     pdf_item.setToolTip(f"Double-click to open\nCtrl+Click to reveal\n{pdf_path}")
                 else:
                     pdf_item.setToolTip("Click to download PDF")
-                self.table.setItem(row_idx, 4, pdf_item)
+                self.table.setItem(row_idx, 5, pdf_item)
                 bib_item = QTableWidgetItem(bib_status)
                 if bib_path:
                     bib_item.setToolTip(f"Double-click to copy bibtex\nCtrl+Click to reveal\n{bib_path}")
                 else:
                     bib_item.setToolTip("Click to download bibtex")
-                self.table.setItem(row_idx, 5, bib_item)
+                self.table.setItem(row_idx, 6, bib_item)
         finally:
             self.table.setUpdatesEnabled(True)
 
@@ -520,11 +539,11 @@ class WorkspaceWindow(QMainWindow):
             return
         row = self._current_rows[row_idx]
         modifiers = QGuiApplication.keyboardModifiers()
-        if column == 3:
+        if column == 4:
             if row.get("abstract_status"):
                 return
             self._download_abstracts_for_rows([row])
-        elif column == 4:
+        elif column == 5:
             pdf_path = row.get("pdf_path")
             if modifiers & Qt.KeyboardModifier.ControlModifier and pdf_path:
                 self._reveal_in_folder(pdf_path)
@@ -532,7 +551,7 @@ class WorkspaceWindow(QMainWindow):
             if row.get("pdf_status") and pdf_path:
                 return
             self._download_pdfs_for_rows([row])
-        elif column == 5:
+        elif column == 6:
             bib_path = row.get("bib_path")
             if modifiers & Qt.KeyboardModifier.ControlModifier and bib_path:
                 self._reveal_in_folder(bib_path)
@@ -545,11 +564,11 @@ class WorkspaceWindow(QMainWindow):
         if row_idx >= len(self._current_rows):
             return
         row = self._current_rows[row_idx]
-        if column == 4:
+        if column == 5:
             pdf_path = row.get("pdf_path")
             if pdf_path:
                 self._open_file(pdf_path)
-        elif column == 5:
+        elif column == 6:
             bibtex = row.get("bibtex")
             bib_path = row.get("bib_path")
             if not bibtex and bib_path and os.path.exists(bib_path):
@@ -643,13 +662,7 @@ class WorkspaceWindow(QMainWindow):
                 break
             if row.get("abstract_status"):
                 continue
-            paper = PaperMeta(
-                paper_id=row["paper_id"],
-                title=row["title"],
-                conf=conf.slug,
-                year=storage.year,
-                detail_url=row.get("detail_url"),
-            )
+            paper = self._paper_from_row(row, conf.slug, storage.year)
             updated = conf.fetch_details(paper)
             storage.update_details(
                 updated.paper_id,
@@ -722,14 +735,7 @@ class WorkspaceWindow(QMainWindow):
                 break
             if row.get("pdf_status"):
                 continue
-            paper = PaperMeta(
-                paper_id=row["paper_id"],
-                title=row.get("title") or "",
-                conf=conf.slug,
-                year=storage.year,
-                detail_url=row.get("detail_url"),
-                pdf_url=row.get("pdf_url"),
-            )
+            paper = self._paper_from_row(row, conf.slug, storage.year)
             data = conf.fetch_pdf(paper)
             base_name = self._safe_filename(row.get("title") or "", paper.paper_id)
             file_path = os.path.join(storage.paths.pdf_dir, f"{base_name}.pdf")
@@ -784,14 +790,7 @@ class WorkspaceWindow(QMainWindow):
         for idx, row in enumerate(rows, start=1):
             bibtex = row.get("bibtex")
             if not bibtex:
-                paper = PaperMeta(
-                    paper_id=row["paper_id"],
-                    title=row["title"],
-                    conf=conf.slug,
-                    year=storage.year,
-                    detail_url=row.get("detail_url"),
-                    bibtex_url=row.get("bibtex_url"),
-                )
+                paper = self._paper_from_row(row, conf.slug, storage.year)
                 try:
                     bibtex = conf.fetch_bibtex(paper)
                 except RuntimeError:

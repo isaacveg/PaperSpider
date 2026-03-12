@@ -16,12 +16,14 @@ class WorkspaceFilterTests(unittest.TestCase):
         self.rows = [
             {
                 "title": "Efficient Systems",
+                "category_text": "main / long",
                 "abstract": "Fast storage pipeline",
                 "authors_text": "Alice, Bob",
                 "keywords_text": "systems, storage",
             },
             {
                 "title": "Language Models",
+                "category_text": "main / short",
                 "abstract": "Transformer scaling laws",
                 "authors_text": "Carol",
                 "keywords_text": "nlp, llm",
@@ -67,6 +69,15 @@ class WorkspaceFilterTests(unittest.TestCase):
         filtered = _filter_paper_rows(
             self.rows,
             [FilterConfig(True, "authors", "not_contains", "must", "alice")],
+            min_should_match=0,
+        )
+
+        self.assertEqual(["Language Models"], [row["title"] for row in filtered])
+
+    def test_category_filter_distinguishes_long_and_short(self) -> None:
+        filtered = _filter_paper_rows(
+            self.rows,
+            [FilterConfig(True, "category", "contains", "must", "short")],
             min_should_match=0,
         )
 

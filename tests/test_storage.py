@@ -52,6 +52,9 @@ class PaperStorageTests(unittest.TestCase):
         )
 
         row = self.storage.list_papers()[0]
+        self.assertEqual("main", row["track"])
+        self.assertEqual("conference", row["paper_type"])
+        self.assertEqual("main / conference", row["category_text"])
         self.assertEqual(["Alice"], row["authors_list"])
         self.assertEqual(["systems"], row["keywords_list"])
         self.assertEqual("Original abstract", row["abstract"])

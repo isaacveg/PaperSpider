@@ -7,7 +7,7 @@
 from .family_base import UsenixFamilyBase
 
 
-class NsdiConference(UsenixFamilyBase):
-    name = "NSDI"
-    slug = "nsdi"
-    conf_prefix = "nsdi"
+class AtcConference(UsenixFamilyBase):
+    name = "ATC"
+    slug = "atc"
+    conf_prefix = "atc"

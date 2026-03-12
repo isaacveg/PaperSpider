@@ -57,6 +57,8 @@ class EmnlpConferenceTests(unittest.TestCase):
         self.assertEqual(1, len(papers))
         self.assertEqual("2024.emnlp-main.1", papers[0].paper_id)
         self.assertEqual("Paper One", papers[0].title)
+        self.assertEqual("main", papers[0].track)
+        self.assertEqual("conference", papers[0].paper_type)
         self.assertEqual(["Alice", "Bob"], papers[0].authors)
         self.assertEqual("Abstract One", papers[0].abstract)
         self.assertEqual("https://aclanthology.org/2024.emnlp-main.1.bib", papers[0].bibtex_url)

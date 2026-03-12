@@ -3,6 +3,9 @@
 [English README](README.md) | [中文 文档](docs/zh.md) | [Documentation](docs/en.md)
 
 **最新动态**
+- 2026-03-12：基于 SIGCOMM 官方 proceedings 页面与 DOI/Crossref 元数据，新增 SIGCOMM 会议适配器。
+- 2026-03-12：基于官方 CVF Open Access 仓库，新增 CVPR 会议适配器。
+- 2026-03-12：基于 ACL Anthology 与 USENIX 通用实现，新增 ACL、NAACL、OSDI、ATC 会议适配器。
 - 2026-03-11：新增 EMNLP 与 NSDI 会议适配器，并补充单元测试。
 - 2026-02-28：新增选中文章导出弹窗（CSV/JSON/纯文本列表），支持字段选择与一键复制。
 - 2026-02-28：新增 ICML 与 ICLR 会议适配器，并补充单元测试。
@@ -12,7 +15,7 @@
 
 ## 功能
 
-- 会议适配器：NeurIPS、ICML、ICLR、EMNLP、NSDI
+- 会议适配器：NeurIPS、ICML、ICLR、CVPR、EMNLP、ACL、NAACL、SIGCOMM、NSDI、OSDI、ATC
 - 工作台式 UI 与论文筛选、选择
 - 筛选条件：Must/Should/Must not + 最小 Should 命中数
 - 摘要下载（悬浮预览；点击缺失项可下载）
