@@ -8,25 +8,18 @@ from __future__ import annotations
 
 import hashlib
 import re
-import time
 from typing import Iterable, List, Optional
 from urllib.parse import urljoin
 
-import requests
 from bs4 import BeautifulSoup
 
 from ..models import PaperMeta
-from .base import ConferenceBase
+from .request_base import RequestsConferenceBase
 
 
-class IcmlConference(ConferenceBase):
+class IcmlConference(RequestsConferenceBase):
     name = "ICML"
     slug = "icml"
-
-    def __init__(self) -> None:
-        self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "PaperSpider/0.1 (+https://localhost)"})
-        self.request_delay = 0.1
 
     def list_papers(self, year: int) -> List[PaperMeta]:
         volume_url = self._find_volume_url(year)
@@ -128,20 +121,6 @@ class IcmlConference(ConferenceBase):
             if anchor:
                 return urljoin("https://proceedings.mlr.press/", anchor["href"])
         return None
-
-    def _get(self, url: str, binary: bool = False) -> Optional[requests.Response]:
-        if self.request_delay > 0:
-            time.sleep(self.request_delay)
-        try:
-            resp = self.session.get(url, timeout=30)
-        except requests.RequestException:
-            return None
-        if resp.status_code != 200:
-            return None
-        if binary:
-            return resp
-        resp.encoding = resp.encoding or "utf-8"
-        return resp
 
     def _find_link(self, anchors: Iterable, marker: str) -> Optional[str]:
         marker_norm = marker.strip().lower()

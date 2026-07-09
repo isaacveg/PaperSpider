@@ -18,13 +18,24 @@ class ConferenceRegistryTests(unittest.TestCase):
         self.assertIn("icml", slugs)
         self.assertIn("iclr", slugs)
         self.assertIn("cvpr", slugs)
+        self.assertIn("iccv", slugs)
         self.assertIn("emnlp", slugs)
         self.assertIn("acl", slugs)
         self.assertIn("naacl", slugs)
+        self.assertIn("aaai", slugs)
+        self.assertIn("ijcai", slugs)
         self.assertIn("sigcomm", slugs)
         self.assertIn("nsdi", slugs)
         self.assertIn("osdi", slugs)
         self.assertIn("atc", slugs)
+        self.assertIn("fast", slugs)
+        self.assertIn("usenix_security", slugs)
+        self.assertIn("ndss", slugs)
+        self.assertIn("vldb", slugs)
+
+    def test_available_conference_slugs_are_unique(self) -> None:
+        slugs = [conf.slug for conf in available_conferences()]
+        self.assertEqual(len(slugs), len(set(slugs)))
 
 
 if __name__ == "__main__":

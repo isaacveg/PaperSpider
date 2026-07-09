@@ -8,29 +8,18 @@ from __future__ import annotations
 
 import hashlib
 import re
-import time
 from typing import List, Optional
 from urllib.parse import urljoin
 
-import requests
 from bs4 import BeautifulSoup
 
-from .base import ConferenceBase
 from ..models import PaperMeta
+from .request_base import RequestsConferenceBase
 
 
-class NeuripsConference(ConferenceBase):
+class NeuripsConference(RequestsConferenceBase):
     name = "NeurIPS"
     slug = "neurips"
-
-    def __init__(self) -> None:
-        self.session = requests.Session()
-        self.session.headers.update(
-            {
-                "User-Agent": "PaperSpider/0.1 (+https://localhost)",
-            }
-        )
-        self.request_delay = 0.1
 
     def list_papers(self, year: int) -> List[PaperMeta]:
         base_urls = [
@@ -114,20 +103,6 @@ class NeuripsConference(ConferenceBase):
         if resp is None:
             raise RuntimeError("Failed to download bibtex")
         return resp.text
-
-    def _get(self, url: str, binary: bool = False) -> Optional[requests.Response]:
-        if self.request_delay > 0:
-            time.sleep(self.request_delay)
-        try:
-            resp = self.session.get(url, timeout=30)
-        except requests.RequestException:
-            return None
-        if resp.status_code != 200:
-            return None
-        if binary:
-            return resp
-        resp.encoding = resp.encoding or "utf-8"
-        return resp
 
     def _extract_paper_id(self, url: str, title: str) -> str:
         basename = url.split("/")[-1]

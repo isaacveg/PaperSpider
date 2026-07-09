@@ -7,26 +7,21 @@
 from __future__ import annotations
 
 import hashlib
-import time
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import parse_qs, urljoin, urlparse
 
-import requests
-
 from ..models import PaperMeta
-from .base import ConferenceBase
+from .request_base import RequestsConferenceBase
 
 
-class IclrConference(ConferenceBase):
+class IclrConference(RequestsConferenceBase):
     name = "ICLR"
     slug = "iclr"
 
     def __init__(self) -> None:
         self.api_bases = ["https://api.openreview.net", "https://api2.openreview.net"]
         self.web_base = "https://openreview.net"
-        self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "PaperSpider/0.1 (+https://localhost)"})
-        self.request_delay = 0.1
+        super().__init__()
 
     def list_papers(self, year: int) -> List[PaperMeta]:
         notes = self._load_submission_notes(year)
@@ -315,22 +310,3 @@ class IclrConference(ConferenceBase):
             return resp.json()
         except ValueError:
             return {}
-
-    def _get(
-        self,
-        url: str,
-        params: Optional[Dict[str, Any]] = None,
-        binary: bool = False,
-    ) -> Optional[requests.Response]:
-        if self.request_delay > 0:
-            time.sleep(self.request_delay)
-        try:
-            resp = self.session.get(url, params=params, timeout=30)
-        except requests.RequestException:
-            return None
-        if resp.status_code != 200:
-            return None
-        if binary:
-            return resp
-        resp.encoding = resp.encoding or "utf-8"
-        return resp

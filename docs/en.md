@@ -23,7 +23,7 @@ uv run paperspider
 
 - Click **Fetch paper list** to load or refresh the list for the selected conference/year.
 - The list is stored in SQLite so you can reopen it later.
-- Supported conferences: NeurIPS, ICML, ICLR, CVPR, EMNLP, ACL, NAACL, SIGCOMM, NSDI, OSDI, ATC.
+- Supported conferences: NeurIPS, ICML, ICLR, AAAI, IJCAI, CVPR, ICCV, EMNLP, ACL, NAACL, SIGCOMM, NSDI, OSDI, ATC, FAST, USENIX Security, NDSS, VLDB.
 
 ### Add filters
 
@@ -117,3 +117,4 @@ uv run --with pyinstaller pyinstaller --noconfirm --clean --windowed --name Pape
 - The UI is built with PyQt6.
 - Conference adapters live in `paper_spider/conferences/`.
 - Storage and schema are in `paper_spider/storage.py`.
+- The CCF A conference implementation survey is in `docs/ccf_a_conference_research.md`.

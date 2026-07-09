@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import unittest
 
-from paper_spider.ui.workspace_window import FilterConfig, _filter_paper_rows
+from paper_spider.filtering import FilterConfig, filter_paper_rows
 
 
 class WorkspaceFilterTests(unittest.TestCase):
@@ -31,7 +31,7 @@ class WorkspaceFilterTests(unittest.TestCase):
         ]
 
     def test_must_and_must_not_filters(self) -> None:
-        filtered = _filter_paper_rows(
+        filtered = filter_paper_rows(
             self.rows,
             [
                 FilterConfig(True, "all", "contains", "must", "storage"),
@@ -43,7 +43,7 @@ class WorkspaceFilterTests(unittest.TestCase):
         self.assertEqual(["Efficient Systems"], [row["title"] for row in filtered])
 
     def test_should_filters_respect_minimum_matches(self) -> None:
-        filtered = _filter_paper_rows(
+        filtered = filter_paper_rows(
             self.rows,
             [
                 FilterConfig(True, "keywords", "contains", "should", "systems"),
@@ -54,7 +54,7 @@ class WorkspaceFilterTests(unittest.TestCase):
 
         self.assertEqual(2, len(filtered))
 
-        filtered = _filter_paper_rows(
+        filtered = filter_paper_rows(
             self.rows,
             [
                 FilterConfig(True, "keywords", "contains", "should", "systems"),
@@ -66,7 +66,7 @@ class WorkspaceFilterTests(unittest.TestCase):
         self.assertEqual([], filtered)
 
     def test_not_contains_mode(self) -> None:
-        filtered = _filter_paper_rows(
+        filtered = filter_paper_rows(
             self.rows,
             [FilterConfig(True, "authors", "not_contains", "must", "alice")],
             min_should_match=0,
@@ -75,7 +75,7 @@ class WorkspaceFilterTests(unittest.TestCase):
         self.assertEqual(["Language Models"], [row["title"] for row in filtered])
 
     def test_category_filter_distinguishes_long_and_short(self) -> None:
-        filtered = _filter_paper_rows(
+        filtered = filter_paper_rows(
             self.rows,
             [FilterConfig(True, "category", "contains", "must", "short")],
             min_should_match=0,

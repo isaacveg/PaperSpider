@@ -23,7 +23,7 @@ uv run paperspider
 
 - 点击 **Fetch paper list** 获取或刷新所选会议/年份的论文列表。
 - 论文列表保存在 SQLite 中，可随时重新打开。
-- 当前支持会议：NeurIPS、ICML、ICLR、CVPR、EMNLP、ACL、NAACL、SIGCOMM、NSDI、OSDI、ATC。
+- 当前支持会议：NeurIPS、ICML、ICLR、AAAI、IJCAI、CVPR、ICCV、EMNLP、ACL、NAACL、SIGCOMM、NSDI、OSDI、ATC、FAST、USENIX Security、NDSS、VLDB。
 
 ### 添加筛选条件
 
@@ -117,3 +117,4 @@ uv run --with pyinstaller pyinstaller --noconfirm --clean --windowed --name Pape
 - UI 使用 PyQt6 构建。
 - 会议适配器位于 `paper_spider/conferences/`。
 - 存储与数据库结构在 `paper_spider/storage.py`。
+- CCF A 会议实现调研位于 `docs/ccf_a_conference_research.md`。

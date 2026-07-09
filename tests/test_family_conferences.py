@@ -70,6 +70,60 @@ USENIX_HTML = """
 </body></html>
 """
 
+USENIX_MIXED_HTML = """
+<html><body>
+  <article class="node node-paper view-mode-schedule">
+    <h2><a href="/conference/fast25/presentation/invited">Invited Talk</a></h2>
+    <div class="content">
+      <div class="field field-name-field-presented-by">
+        <div class="field-item odd"><p>Speaker, <em>Example Lab</em></p></div>
+      </div>
+      <div class="field field-name-field-paper-description-long">
+        <p>Talk abstract.</p>
+      </div>
+    </div>
+  </article>
+  <article class="node node-paper view-mode-schedule">
+    <h2><a href="/conference/fast25/presentation/paper">Real Paper</a></h2>
+    <div class="content">
+      <div class="field field-name-field-paper-people-text">
+        <div class="field-item odd"><p>Alice and Bob, <em>Example Lab</em></p></div>
+      </div>
+      <div class="field field-name-field-paper-description-long">
+        <p>Paper abstract.</p>
+      </div>
+    </div>
+  </article>
+</body></html>
+"""
+
+USENIX_EMPTY_AUTHOR_HTML = """
+<html><body>
+  <article class="node node-paper view-mode-schedule">
+    <h2><a href="/conference/fast25/presentation/empty">Empty Author Paper</a></h2>
+    <div class="content">
+      <div class="field field-name-field-paper-people-text">
+        <div class="field-item odd"><p> </p></div>
+      </div>
+      <div class="field field-name-field-paper-description-long">
+        <p>Paper abstract.</p>
+      </div>
+    </div>
+  </article>
+  <article class="node node-paper view-mode-schedule">
+    <h2><a href="/conference/fast25/presentation/paper">Real Paper</a></h2>
+    <div class="content">
+      <div class="field field-name-field-paper-people-text">
+        <div class="field-item odd"><p>Alice and Bob, <em>Example Lab</em></p></div>
+      </div>
+      <div class="field field-name-field-paper-description-long">
+        <p>Paper abstract.</p>
+      </div>
+    </div>
+  </article>
+</body></html>
+"""
+
 
 class FamilyConferenceTests(unittest.TestCase):
     def test_acl_combines_long_and_short_volumes(self) -> None:
@@ -131,6 +185,20 @@ class FamilyConferenceTests(unittest.TestCase):
             conf.list_papers(2025)
 
         self.assertEqual("https://www.usenix.org/conference/atc25/technical-sessions", mock_get.call_args[0][0])
+
+    def test_usenix_skips_schedule_items_without_paper_authors(self) -> None:
+        conf = AtcConference()
+        with patch.object(conf, "_get", return_value=_FakeResponse(USENIX_MIXED_HTML)):
+            papers = conf.list_papers(2025)
+
+        self.assertEqual(["Real Paper"], [paper.title for paper in papers])
+
+    def test_usenix_skips_schedule_items_with_empty_paper_authors(self) -> None:
+        conf = AtcConference()
+        with patch.object(conf, "_get", return_value=_FakeResponse(USENIX_EMPTY_AUTHOR_HTML)):
+            papers = conf.list_papers(2025)
+
+        self.assertEqual(["Real Paper"], [paper.title for paper in papers])
 
 
 if __name__ == "__main__":

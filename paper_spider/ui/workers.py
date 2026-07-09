@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import inspect
 import threading
+import traceback
 from typing import Any, Callable
 
 from PyQt6.QtCore import QObject, QRunnable, pyqtSignal
@@ -39,6 +40,7 @@ class Worker(QRunnable):
                 result = self.fn(*self.args, **self.kwargs)
             self.signals.finished.emit(result)
         except Exception as exc:  # noqa: BLE001
+            self.signals.log.emit(traceback.format_exc())
             self.signals.error.emit(str(exc))
 
 

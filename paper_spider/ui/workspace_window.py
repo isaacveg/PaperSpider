@@ -7,10 +7,8 @@
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
-from dataclasses import dataclass
 from typing import List, Optional
 
 from PyQt6.QtCore import Qt, QThreadPool, QUrl
@@ -34,79 +32,12 @@ from PyQt6.QtWidgets import (
 )
 
 from ..conferences import available_conferences
-from ..models import PaperCategory, PaperMeta
+from ..filtering import FilterConfig, filter_paper_rows as _filter_paper_rows
 from ..storage import PaperStorage
+from ..workspace_service import PaperLoadResult, WorkspaceService
 from .export_dialog import ExportDialog
 from .settings_dialog import SettingsDialog
 from .workers import CancelToken, Worker
-
-
-@dataclass
-class FilterConfig:
-    enabled: bool
-    field: str
-    mode: str
-    role: str
-    value: str
-
-
-@dataclass
-class PaperLoadResult:
-    storage_key: str
-    all_rows: List[dict]
-    filtered_rows: List[dict]
-
-
-def _filter_paper_rows(
-    rows: List[dict],
-    configs: List[FilterConfig],
-    min_should_match: int,
-) -> List[dict]:
-    if not configs:
-        return list(rows)
-
-    must = [cfg for cfg in configs if cfg.role == "must"]
-    should = [cfg for cfg in configs if cfg.role == "should"]
-    must_not = [cfg for cfg in configs if cfg.role == "must not"]
-
-    def matches(row: dict, cfg: FilterConfig) -> bool:
-        value = cfg.value.lower()
-        title = (row.get("title") or "").lower()
-        category = (row.get("category_text") or "").lower()
-        abstract = (row.get("abstract") or "").lower()
-        authors = (row.get("authors_text") or "").lower()
-        keywords = (row.get("keywords_text") or "").lower()
-
-        if cfg.field == "title":
-            haystack = title
-        elif cfg.field == "authors":
-            haystack = authors
-        elif cfg.field == "category":
-            haystack = category
-        elif cfg.field == "abstract":
-            haystack = abstract
-        elif cfg.field == "keywords":
-            haystack = keywords
-        else:
-            haystack = " ".join([title, category, authors, abstract, keywords])
-
-        contains = value in haystack
-        if cfg.mode == "contains":
-            return contains
-        return not contains
-
-    filtered: List[dict] = []
-    for row in rows:
-        if any(matches(row, cfg) for cfg in must_not):
-            continue
-        if must and not all(matches(row, cfg) for cfg in must):
-            continue
-        if should and min_should_match > 0:
-            match_count = sum(1 for cfg in should if matches(row, cfg))
-            if match_count < min_should_match:
-                continue
-        filtered.append(row)
-    return filtered
 
 
 class FilterRow(QWidget):
@@ -157,6 +88,7 @@ class WorkspaceWindow(QMainWindow):
         self.storage = storage
         self.base_dir: Optional[str] = None
         self.thread_pool = QThreadPool()
+        self.service = WorkspaceService()
         self.available_conf_map = {conf.slug: conf for conf in available_conferences()}
         self._all_rows: List[dict] = []
         self._current_rows: List[dict] = []
@@ -260,17 +192,6 @@ class WorkspaceWindow(QMainWindow):
 
         self._add_filter()
 
-    def _safe_filename(self, title: str, fallback: str) -> str:
-        name = title.strip().replace(" ", "_").replace("$", "")
-        name = re.sub(r"[\\/:*?\"<>|]", "", name)
-        name = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
-        name = re.sub(r"_+", "_", name).strip("._-")
-        if not name:
-            name = fallback
-        if len(name) > 120:
-            name = name[:120].rstrip("._-")
-        return name
-
     def _open_file(self, path: str) -> None:
         if not os.path.exists(path):
             self._log(f"Missing file: {path}")
@@ -290,21 +211,6 @@ class WorkspaceWindow(QMainWindow):
 
     def _log(self, message: str) -> None:
         self.log_view.append(message)
-
-    def _paper_from_row(self, row: dict, conf_slug: str, year: int) -> PaperMeta:
-        category = row.get("category")
-        if not isinstance(category, PaperCategory):
-            category = PaperCategory.from_fields(row.get("track"), row.get("paper_type"))
-        return PaperMeta(
-            paper_id=row["paper_id"],
-            title=row.get("title") or "",
-            conf=conf_slug,
-            year=year,
-            category=category,
-            detail_url=row.get("detail_url"),
-            pdf_url=row.get("pdf_url"),
-            bibtex_url=row.get("bibtex_url"),
-        )
 
     def _ensure_ready(self) -> bool:
         if self.storage and self.conf:
@@ -362,9 +268,7 @@ class WorkspaceWindow(QMainWindow):
         self._log("Fetching paper list...")
 
     def _fetch_list_task(self, conf, storage: PaperStorage, log=None) -> int:
-        papers = conf.list_papers(storage.year)
-        storage.upsert_papers(papers)
-        return len(papers)
+        return self.service.fetch_list(conf, storage)
 
     def _on_fetch_done(self, count: int) -> None:
         self._log(f"Loaded {count} papers")
@@ -455,15 +359,7 @@ class WorkspaceWindow(QMainWindow):
         min_should_match: int,
         log=None,
     ) -> PaperLoadResult:
-        all_rows = cached_rows
-        if all_rows is None:
-            all_rows = storage.reconcile_file_states(storage.list_papers())
-        filtered_rows = _filter_paper_rows(all_rows, configs, min_should_match)
-        return PaperLoadResult(
-            storage_key=storage.paths.db_path,
-            all_rows=all_rows,
-            filtered_rows=filtered_rows,
-        )
+        return self.service.load_papers(storage, cached_rows, configs, min_should_match)
 
     def _render_rows(self, rows: List[dict]) -> None:
         self._current_rows = rows
@@ -655,28 +551,7 @@ class WorkspaceWindow(QMainWindow):
         cancel: CancelToken,
         log=None,
     ) -> int:
-        total = len(rows)
-        downloaded = 0
-        for idx, row in enumerate(rows, start=1):
-            if cancel.cancelled():
-                break
-            if row.get("abstract_status"):
-                continue
-            paper = self._paper_from_row(row, conf.slug, storage.year)
-            updated = conf.fetch_details(paper)
-            storage.update_details(
-                updated.paper_id,
-                updated.abstract,
-                updated.authors,
-                updated.keywords,
-                updated.pdf_url,
-                updated.bibtex_url,
-                updated.bibtex,
-            )
-            downloaded += 1
-            if log:
-                log(f"[{idx}/{total}] {updated.title}")
-        return downloaded
+        return self.service.download_abstracts(conf, storage, rows, cancel.cancelled, log=log)
 
     def _on_abstracts_done(self, count: int) -> None:
         cancelled = self.abstract_cancel_token.cancelled() if self.abstract_cancel_token else False
@@ -728,29 +603,7 @@ class WorkspaceWindow(QMainWindow):
         cancel: CancelToken,
         log=None,
     ) -> int:
-        total = len(rows)
-        downloaded = 0
-        for idx, row in enumerate(rows, start=1):
-            if cancel.cancelled():
-                break
-            if row.get("pdf_status"):
-                continue
-            paper = self._paper_from_row(row, conf.slug, storage.year)
-            data = conf.fetch_pdf(paper)
-            base_name = self._safe_filename(row.get("title") or "", paper.paper_id)
-            file_path = os.path.join(storage.paths.pdf_dir, f"{base_name}.pdf")
-            if os.path.exists(file_path):
-                file_path = os.path.join(
-                    storage.paths.pdf_dir,
-                    f"{base_name}_{paper.paper_id}.pdf",
-                )
-            with open(file_path, "wb") as f:
-                f.write(data)
-            storage.mark_pdf_downloaded(paper.paper_id, file_path)
-            downloaded += 1
-            if log:
-                log(f"[{idx}/{total}] {paper.paper_id}")
-        return downloaded
+        return self.service.download_pdfs(conf, storage, rows, cancel.cancelled, log=log)
 
     def _on_pdfs_done(self, count: int) -> None:
         cancelled = self.pdf_cancel_token.cancelled() if self.pdf_cancel_token else False
@@ -785,33 +638,7 @@ class WorkspaceWindow(QMainWindow):
         self._log("Exporting bibtex...")
 
     def _export_bibtex_task(self, conf, storage: PaperStorage, rows: List[dict], log=None) -> int:
-        total = len(rows)
-        exported = 0
-        for idx, row in enumerate(rows, start=1):
-            bibtex = row.get("bibtex")
-            if not bibtex:
-                paper = self._paper_from_row(row, conf.slug, storage.year)
-                try:
-                    bibtex = conf.fetch_bibtex(paper)
-                except RuntimeError:
-                    bibtex = None
-            if bibtex:
-                base_name = self._safe_filename(row.get("title") or "", row["paper_id"])
-                file_path = os.path.join(storage.paths.bib_dir, f"{base_name}.bib")
-                if os.path.exists(file_path):
-                    file_path = os.path.join(
-                        storage.paths.bib_dir,
-                        f"{base_name}_{row['paper_id']}.bib",
-                    )
-                with open(file_path, "w", encoding="utf-8") as f:
-                    f.write(bibtex)
-                storage.mark_bib_exported(row["paper_id"], bibtex, file_path)
-                exported += 1
-                if log:
-                    log(f"[{idx}/{total}] saved bibtex: {row['paper_id']}")
-            elif log:
-                log(f"[{idx}/{total}] missing bibtex: {row['paper_id']}")
-        return exported
+        return self.service.export_bibtex(conf, storage, rows, log=log)
 
     def _on_bibtex_done(self, count: int) -> None:
         QMessageBox.information(self, "Done", f"Exported {count} bibtex files")

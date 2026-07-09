@@ -316,6 +316,9 @@ class UsenixFamilyBase(RequestsConferenceBase):
         return paper.bibtex
 
     def _paper_from_schedule(self, article, base_url: str, year: int) -> Optional[PaperMeta]:
+        if article.select_one(".field-name-field-paper-people-text") is None:
+            return None
+
         title_anchor = article.select_one("h2 a[href]")
         if title_anchor is None:
             return None
@@ -328,6 +331,8 @@ class UsenixFamilyBase(RequestsConferenceBase):
         paper_id = detail_url.rstrip("/").split("/")[-1]
         abstract = self._field_text(article, "field-name-field-paper-description-long")
         authors = self._extract_listing_authors(article)
+        if not authors:
+            return None
 
         return PaperMeta(
             paper_id=paper_id or hashlib.md5(title.encode("utf-8")).hexdigest(),

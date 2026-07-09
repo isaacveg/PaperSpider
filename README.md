@@ -3,6 +3,7 @@
 [中文 README](README.zh.md) | [Documentation](docs/en.md) | [中文 文档](docs/zh.md)
 
 **News**
+- 2026-07-09: Added CCF A adapters for AAAI, ICCV, IJCAI, FAST, USENIX Security, NDSS, and VLDB; documented the remaining CCF A conference roadmap.
 - 2026-03-12: Added a SIGCOMM adapter based on the official proceedings page plus DOI/Crossref metadata.
 - 2026-03-12: Added CVPR adapter based on the official CVF Open Access repository.
 - 2026-03-12: Added ACL, NAACL, OSDI, and ATC adapters by reusing ACL Anthology and USENIX base implementations.
@@ -15,7 +16,7 @@ A minimal PyQt app to fetch conference paper lists, download abstracts/PDFs, and
 
 ## Features
 
-- Conference adapters: NeurIPS, ICML, ICLR, CVPR, EMNLP, ACL, NAACL, SIGCOMM, NSDI, OSDI, ATC
+- Conference adapters: NeurIPS, ICML, ICLR, AAAI, IJCAI, CVPR, ICCV, EMNLP, ACL, NAACL, SIGCOMM, NSDI, OSDI, ATC, FAST, USENIX Security, NDSS, VLDB
 - Workspace UI with filters and selection
 - Filters: Must/Should/Must not + min-should-match
 - Abstract download (hover to preview; click to fetch missing)
