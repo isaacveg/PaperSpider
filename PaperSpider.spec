@@ -1,4 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
+import sys
+
+# Platform-appropriate icon: .icns on macOS, .ico on Windows.
+_icon = 'assets/icon.icns' if sys.platform == 'darwin' else 'assets/icon.ico'
 
 
 a = Analysis(
@@ -27,6 +31,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
+    icon=_icon,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -42,9 +47,12 @@ coll = COLLECT(
     upx_exclude=[],
     name='PaperSpider',
 )
-app = BUNDLE(
-    coll,
-    name='PaperSpider.app',
-    icon=None,
-    bundle_identifier=None,
-)
+# The .app bundle is a macOS-only concept; on Windows we ship the
+# COLLECT directory (dist/PaperSpider/) directly.
+if sys.platform == 'darwin':
+    app = BUNDLE(
+        coll,
+        name='PaperSpider.app',
+        icon=_icon,
+        bundle_identifier=None,
+    )

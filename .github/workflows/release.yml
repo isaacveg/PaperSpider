@@ -30,10 +30,10 @@ jobs:
       - name: Sync deps
         run: uv sync
       - name: Build with PyInstaller
-        run: uv run --with pyinstaller pyinstaller --noconfirm --clean --windowed --name PaperSpider paper_spider/__main__.py
+        run: uv run --with pyinstaller pyinstaller --noconfirm --clean PaperSpider.spec
       - name: Package (macOS)
         if: runner.os == 'macOS'
-        run: ditto -c -k --sequesterRsrc --keepParent dist/PaperSpider PaperSpider-macos.zip
+        run: ditto -c -k --sequesterRsrc --keepParent dist/PaperSpider.app PaperSpider-macos.zip
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
