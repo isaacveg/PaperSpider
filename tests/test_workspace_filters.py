@@ -42,6 +42,24 @@ class WorkspaceFilterTests(unittest.TestCase):
 
         self.assertEqual(["Efficient Systems"], [row["title"] for row in filtered])
 
+    def test_must_not_filter_excludes_matching_rows_without_must_filter(self) -> None:
+        filtered = filter_paper_rows(
+            self.rows,
+            [FilterConfig(True, "title", "contains", "must not", "language")],
+            min_should_match=0,
+        )
+
+        self.assertEqual(["Efficient Systems"], [row["title"] for row in filtered])
+
+    def test_must_not_role_accepts_underscore_alias(self) -> None:
+        filtered = filter_paper_rows(
+            self.rows,
+            [FilterConfig(True, "title", "contains", "must_not", "language")],
+            min_should_match=0,
+        )
+
+        self.assertEqual(["Efficient Systems"], [row["title"] for row in filtered])
+
     def test_should_filters_respect_minimum_matches(self) -> None:
         filtered = filter_paper_rows(
             self.rows,

@@ -50,13 +50,17 @@ class ExportDialog(QDialog):
 
         generate_btn = QPushButton("Generate")
         generate_btn.clicked.connect(self._generate)
-        copy_btn = QPushButton("Copy")
-        copy_btn.clicked.connect(self._copy)
+        self.copy_btn = QPushButton("Copy")
+        self.copy_btn.clicked.connect(self._copy)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
 
         self.output_text = QTextEdit()
         self.output_text.setPlaceholderText("Generated export content will appear here.")
+        self.output_text.textChanged.connect(self._reset_copy_feedback)
+        self.title_check.toggled.connect(self._reset_copy_feedback)
+        self.authors_check.toggled.connect(self._reset_copy_feedback)
+        self.abstract_check.toggled.connect(self._reset_copy_feedback)
 
         layout.addWidget(QLabel("Format"), 0, 0)
         layout.addWidget(self.format_combo, 0, 1)
@@ -71,20 +75,25 @@ class ExportDialog(QDialog):
 
         buttons = QHBoxLayout()
         buttons.addWidget(generate_btn)
-        buttons.addWidget(copy_btn)
+        buttons.addWidget(self.copy_btn)
         buttons.addStretch()
         buttons.addWidget(close_btn)
         layout.addLayout(buttons, 2, 0, 1, 2)
 
         layout.addWidget(self.output_text, 3, 0, 1, 2)
         self.setLayout(layout)
+        self._generate()
 
-    def _on_format_changed(self) -> None:
+    def _on_format_changed(self, *args) -> None:
         fmt = self.format_combo.currentData()
         enable_fields = fmt != "txt"
         self.title_check.setEnabled(enable_fields)
         self.authors_check.setEnabled(enable_fields)
         self.abstract_check.setEnabled(enable_fields)
+        self._reset_copy_feedback()
+
+    def _reset_copy_feedback(self, *args) -> None:
+        self.copy_btn.setText("Copy")
 
     def _generate(self) -> None:
         try:
@@ -105,3 +114,4 @@ class ExportDialog(QDialog):
         if not content:
             return
         QGuiApplication.clipboard().setText(content)
+        self.copy_btn.setText("Copied")

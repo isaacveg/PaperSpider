@@ -11,72 +11,132 @@ import subprocess
 import sys
 from typing import List, Optional
 
-from PyQt6.QtCore import Qt, QThreadPool, QUrl
+from PyQt6.QtCore import Qt, QThreadPool, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFrame,
     QHBoxLayout,
+    QHeaderView,
     QDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSplitter,
     QSpinBox,
-    QTableWidget,
-    QTableWidgetItem,
-    QTextEdit,
+    QStackedWidget,
+    QTableView,
     QVBoxLayout,
     QWidget,
 )
 
 from ..conferences import available_conferences
-from ..filtering import FilterConfig, filter_paper_rows as _filter_paper_rows
+from ..filtering import FilterConfig
 from ..storage import PaperStorage
 from ..workspace_service import PaperLoadResult, WorkspaceService
+from .dataset_dialog import DatasetDialog
 from .export_dialog import ExportDialog
+from .paper_table_model import PaperTableModel
 from .settings_dialog import SettingsDialog
+from .theme import apply_theme
+from .workspace_view_helpers import (
+    paper_id_for_row,
+    reconcile_selected_ids,
+    summarize_rows,
+)
+from .workspace_widgets import CollapsibleLogPanel, DetailsPanel, EmptyStateWidget, SummaryStrip, TopBar
 from .workers import CancelToken, Worker
 
 
-class FilterRow(QWidget):
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+class FilterRow(QFrame):
+    def __init__(self, parent: Optional[QWidget] = None, default_role: str = "Must") -> None:
         super().__init__(parent)
-        layout = QHBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
+        self.setObjectName("filterRuleCard")
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(6, 5, 6, 5)
 
         self.enable_checkbox = QCheckBox()
         self.enable_checkbox.setChecked(True)
 
         self.field_combo = QComboBox()
-        self.field_combo.addItems(["All", "Title", "Category", "Authors", "Abstract", "Keywords"])
+        for label, value in (
+            ("All", "all"),
+            ("Title", "title"),
+            ("Cat", "category"),
+            ("Author", "authors"),
+            ("Abs", "abstract"),
+            ("Keys", "keywords"),
+        ):
+            self.field_combo.addItem(label, value)
+        self.field_combo.setMinimumWidth(96)
+        self.field_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["contains", "not contains"])
+        self.mode_combo.addItem("has", "contains")
+        self.mode_combo.addItem("not", "not_contains")
+        self.mode_combo.setMinimumWidth(88)
+        self.mode_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.mode_combo.setToolTip("has = contains; not = does not contain")
 
         self.role_combo = QComboBox()
-        self.role_combo.addItems(["Must", "Should", "Must not"])
+        for label, value in (
+            ("Must", "must"),
+            ("Should", "should"),
+            ("Not", "must not"),
+        ):
+            self.role_combo.addItem(label, value)
+        self.role_combo.setMinimumWidth(100)
+        self.role_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        role_index = self.role_combo.findData(default_role.lower())
+        if role_index >= 0:
+            self.role_combo.setCurrentIndex(role_index)
         self.role_combo.setToolTip("Must = required, Should = optional, Must not = excluded")
 
         self.text_edit = QLineEdit()
+        self.text_edit.setPlaceholderText("keyword, author, title...")
+        self.text_edit.setMinimumWidth(64)
 
-        self.remove_btn = QPushButton("Remove")
+        self.remove_btn = QPushButton("x")
+        self.remove_btn.setObjectName("compactDeleteButton")
+        self.remove_btn.setToolTip("Remove this rule")
+        self.remove_btn.setFixedWidth(22)
 
-        layout.addWidget(self.enable_checkbox)
-        layout.addWidget(self.field_combo)
-        layout.addWidget(self.mode_combo)
-        layout.addWidget(self.role_combo)
-        layout.addWidget(self.text_edit)
-        layout.addWidget(self.remove_btn)
+        self.control_row = QWidget()
+        control_layout = QHBoxLayout()
+        control_layout.setContentsMargins(0, 0, 0, 0)
+        control_layout.setSpacing(6)
+        control_layout.addWidget(self.enable_checkbox)
+        control_layout.addWidget(self.role_combo, stretch=3)
+        control_layout.addWidget(self.field_combo, stretch=3)
+        control_layout.addWidget(self.mode_combo, stretch=2)
+        self.control_row.setLayout(control_layout)
+
+        self.text_row = QWidget()
+        text_layout = QHBoxLayout()
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(4)
+        text_layout.addWidget(self.text_edit, stretch=1)
+        text_layout.addWidget(self.remove_btn)
+        self.text_row.setLayout(text_layout)
+
+        layout.addWidget(self.control_row)
+        layout.addWidget(self.text_row)
+
         self.setLayout(layout)
 
     def config(self) -> FilterConfig:
         return FilterConfig(
             enabled=self.enable_checkbox.isChecked(),
-            field=self.field_combo.currentText().lower(),
-            mode=self.mode_combo.currentText().replace(" ", "_"),
-            role=self.role_combo.currentText().lower(),
+            field=str(self.field_combo.currentData()),
+            mode=str(self.mode_combo.currentData()),
+            role=str(self.role_combo.currentData()),
             value=self.text_edit.text().strip(),
         )
 
@@ -91,15 +151,20 @@ class WorkspaceWindow(QMainWindow):
         self.service = WorkspaceService()
         self.available_conf_map = {conf.slug: conf for conf in available_conferences()}
         self._all_rows: List[dict] = []
+        self._filtered_rows: List[dict] = []
         self._current_rows: List[dict] = []
         self.filter_rows: List[FilterRow] = []
         self.abstract_cancel_token: Optional[CancelToken] = None
         self.pdf_cancel_token: Optional[CancelToken] = None
+        self._selected_paper_ids: set[str] = set()
+        self._rendering_rows = False
+        self._empty_action = "dataset"
         self._rows_loading = False
         self._pending_row_reload = False
         self._pending_row_refresh = False
         self.setWindowTitle("PaperSpider Workspace")
         self._build_ui()
+        apply_theme(self)
         self._refresh_status()
         if self.storage:
             self._load_papers(force_refresh=True)
@@ -107,90 +172,207 @@ class WorkspaceWindow(QMainWindow):
     def _build_ui(self) -> None:
         root = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(8, 8, 8, 8)
 
-        header_layout = QHBoxLayout()
-        self.status_label = QLabel("No conference loaded. Click Settings.")
-        settings_btn = QPushButton("Settings")
-        settings_btn.clicked.connect(self._open_settings)
-        self.fetch_btn = QPushButton("Fetch paper list")
-        self.fetch_btn.clicked.connect(self._fetch_list)
-        header_layout.addWidget(self.status_label)
-        header_layout.addStretch()
-        header_layout.addWidget(self.fetch_btn)
-        header_layout.addWidget(settings_btn)
-        layout.addLayout(header_layout)
+        self.top_bar = TopBar()
+        self.top_bar.settings_clicked.connect(self._open_settings)
+        self.top_bar.dataset_clicked.connect(self._open_dataset_dialog)
+        layout.addWidget(self.top_bar)
 
-        filter_container = QWidget()
-        filter_layout = QVBoxLayout()
-        filter_container.setLayout(filter_layout)
-        self.filter_layout = filter_layout
+        self.summary_strip = SummaryStrip()
 
-        filter_header = QHBoxLayout()
-        add_filter_btn = QPushButton("Add filter")
-        add_filter_btn.clicked.connect(self._add_filter)
-        self.apply_filter_btn = QPushButton("Apply filter")
+        filter_panel = QFrame()
+        filter_panel.setObjectName("filterSidebar")
+        filter_panel.setFrameShape(QFrame.Shape.StyledPanel)
+        filter_panel.setMinimumWidth(380)
+        filter_panel.setMaximumWidth(460)
+        filter_panel_layout = QVBoxLayout()
+        filter_panel_layout.setContentsMargins(8, 0, 12, 0)
+        filter_title = QLabel("Filters")
+        filter_title.setStyleSheet("font-weight: 700;")
+        filter_panel_layout.addWidget(filter_title)
+
+        filter_hint = QLabel(
+            "Must rules are required. Must not rules exclude matches. "
+            "Should rules apply only when the minimum below is greater than 0."
+        )
+        filter_hint.setWordWrap(True)
+        filter_panel_layout.addWidget(filter_hint)
+
+        add_must_btn = QPushButton("+Must")
+        add_must_btn.setObjectName("secondaryButton")
+        add_must_btn.setToolTip("Add a Must rule")
+        add_must_btn.clicked.connect(lambda: self._add_filter("Must"))
+        add_should_btn = QPushButton("+Should")
+        add_should_btn.setObjectName("secondaryButton")
+        add_should_btn.setToolTip("Add a Should rule")
+        add_should_btn.clicked.connect(lambda: self._add_filter("Should"))
+        add_must_not_btn = QPushButton("+Not")
+        add_must_not_btn.setObjectName("secondaryButton")
+        add_must_not_btn.setToolTip("Add a Must not rule")
+        add_must_not_btn.clicked.connect(lambda: self._add_filter("Must not"))
+        self.apply_filter_btn = QPushButton("Apply")
+        self.apply_filter_btn.setObjectName("primaryButton")
         self.apply_filter_btn.clicked.connect(self._load_papers)
-        self.clear_filter_btn = QPushButton("Clear filters")
+        self.clear_filter_btn = QPushButton("Clear")
+        self.clear_filter_btn.setObjectName("secondaryButton")
         self.clear_filter_btn.clicked.connect(self._clear_filters)
         self.should_spin = QSpinBox()
         self.should_spin.setRange(0, 10)
         self.should_spin.setValue(0)
         self.should_spin.setToolTip("Require at least N 'Should' filters to match")
-        filter_header.addWidget(add_filter_btn)
-        filter_header.addWidget(self.apply_filter_btn)
-        filter_header.addWidget(self.clear_filter_btn)
-        filter_header.addWidget(QLabel("Min should match"))
-        filter_header.addWidget(self.should_spin)
-        filter_header.addStretch()
-        layout.addLayout(filter_header)
-        layout.addWidget(filter_container)
+        add_rule_layout = QHBoxLayout()
+        add_rule_layout.addWidget(add_must_btn)
+        add_rule_layout.addWidget(add_should_btn)
+        add_rule_layout.addWidget(add_must_not_btn)
+        filter_panel_layout.addLayout(add_rule_layout)
+        self.min_should_row = QWidget()
+        self.min_should_row.setObjectName("minShouldRow")
+        min_should_layout = QHBoxLayout()
+        min_should_layout.setContentsMargins(0, 0, 0, 0)
+        min_should_layout.addWidget(QLabel("Min should match"))
+        min_should_layout.addWidget(self.should_spin)
+        self.min_should_row.setLayout(min_should_layout)
+        filter_panel_layout.addWidget(self.min_should_row)
 
-        self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(
-            ["Select", "Title", "Category", "Authors", "Abstract", "PDF", "Bibtex"]
+        filter_buttons = QHBoxLayout()
+        filter_buttons.addWidget(self.apply_filter_btn)
+        filter_buttons.addWidget(self.clear_filter_btn)
+        filter_panel_layout.addLayout(filter_buttons)
+
+        filter_container = QWidget()
+        self.filter_layout = QVBoxLayout()
+        self.filter_layout.setContentsMargins(0, 0, 0, 0)
+        self.filter_layout.setSpacing(6)
+        self.filter_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        filter_container.setLayout(self.filter_layout)
+        self.filter_scroll = QScrollArea()
+        self.filter_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.filter_scroll.setWidgetResizable(True)
+        self.filter_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.filter_scroll.setWidget(filter_container)
+        filter_panel_layout.addWidget(self.filter_scroll, stretch=1)
+        filter_panel.setLayout(filter_panel_layout)
+
+        self.paper_model = PaperTableModel(self)
+        self.paper_model.selection_changed.connect(self._on_model_selection_changed)
+        self.table = QTableView()
+        self.table.setModel(self.paper_model)
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setColumnWidth(3, 220)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
+        self.table.clicked.connect(lambda index: self._update_details(index.row()))
+        self.table.doubleClicked.connect(self._on_table_double_clicked)
+        self.table.selectionModel().currentRowChanged.connect(
+            lambda current, _previous: self._update_details(current.row())
         )
-        self.table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(self.table)
-        self.table.cellClicked.connect(self._on_table_clicked)
-        self.table.cellDoubleClicked.connect(self._on_table_double_clicked)
 
-        select_layout = QHBoxLayout()
-        select_all_btn = QPushButton("Select all")
-        select_all_btn.clicked.connect(lambda: self._set_selection_state(True))
-        select_none_btn = QPushButton("Select none")
-        select_none_btn.clicked.connect(lambda: self._set_selection_state(False))
-        select_invert_btn = QPushButton("Invert")
-        select_invert_btn.clicked.connect(self._invert_selection)
-        select_layout.addWidget(select_all_btn)
-        select_layout.addWidget(select_none_btn)
-        select_layout.addWidget(select_invert_btn)
-        select_layout.addStretch()
-        layout.addLayout(select_layout)
+        self.empty_state = EmptyStateWidget()
+        self.empty_state.primary_clicked.connect(self._handle_empty_state_action)
+        self.table_stack = QStackedWidget()
+        self.table_stack.addWidget(self.empty_state)
+        self.table_stack.addWidget(self.table)
 
-        action_layout = QHBoxLayout()
+        self.action_layout = QHBoxLayout()
+        self.selection_controls = QWidget()
+        self.selection_controls.setObjectName("selectionControls")
+        selection_layout = QHBoxLayout()
+        selection_layout.setContentsMargins(0, 0, 0, 0)
+        selection_layout.setSpacing(4)
+        self.select_all_btn = QPushButton("Select all")
+        self.select_all_btn.setObjectName("secondaryButton")
+        self.select_all_btn.clicked.connect(lambda: self._set_selection_state(True))
+        self.select_none_btn = QPushButton("Select none")
+        self.select_none_btn.setObjectName("secondaryButton")
+        self.select_none_btn.clicked.connect(lambda: self._set_selection_state(False))
+        self.invert_btn = QPushButton("Invert")
+        self.invert_btn.setObjectName("secondaryButton")
+        self.invert_btn.clicked.connect(self._invert_selection)
+        selection_layout.addWidget(self.select_all_btn)
+        selection_layout.addWidget(self.select_none_btn)
+        selection_layout.addWidget(self.invert_btn)
+        self.selection_controls.setLayout(selection_layout)
         self.abstract_btn = QPushButton("Download abstracts")
+        self.abstract_btn.setObjectName("secondaryButton")
         self.abstract_btn.clicked.connect(self._download_abstracts)
         self.pdf_btn = QPushButton("Download PDFs")
+        self.pdf_btn.setObjectName("primaryButton")
         self.pdf_btn.clicked.connect(self._download_pdfs)
-        self.bib_btn = QPushButton("Export bibtex")
+        self.bib_btn = QPushButton("Export Bib")
+        self.bib_btn.setObjectName("secondaryButton")
         self.bib_btn.clicked.connect(self._export_bibtex)
         self.export_btn = QPushButton("Export selected")
+        self.export_btn.setObjectName("primaryButton")
         self.export_btn.clicked.connect(self._open_export_dialog)
 
-        action_layout.addWidget(self.abstract_btn)
-        action_layout.addWidget(self.pdf_btn)
-        action_layout.addWidget(self.bib_btn)
-        action_layout.addWidget(self.export_btn)
-        layout.addLayout(action_layout)
+        self.action_layout.addWidget(self.selection_controls)
+        self.action_layout.addSpacing(12)
+        self.action_layout.addWidget(self.abstract_btn)
+        self.action_layout.addWidget(self.pdf_btn)
+        self.action_layout.addWidget(self.bib_btn)
+        self.action_layout.addWidget(self.export_btn)
+        self.action_layout.addStretch()
 
-        self.log_view = QTextEdit()
-        self.log_view.setReadOnly(True)
-        layout.addWidget(self.log_view)
+        center_panel = QWidget()
+        center_layout = QVBoxLayout()
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_header = QHBoxLayout()
+        center_header.setContentsMargins(0, 0, 0, 0)
+        self.quick_filter_edit = QLineEdit()
+        self.quick_filter_edit.setClearButtonEnabled(True)
+        self.quick_filter_edit.setPlaceholderText("Quick filter current list")
+        self.quick_filter_edit.setMaximumWidth(280)
+        self.quick_filter_timer = QTimer(self)
+        self.quick_filter_timer.setSingleShot(True)
+        self.quick_filter_timer.setInterval(180)
+        self.quick_filter_timer.timeout.connect(self._apply_quick_filter)
+        self.quick_filter_edit.textChanged.connect(self._schedule_quick_filter)
+        center_header.addWidget(self.summary_strip, stretch=1)
+        center_header.addWidget(self.quick_filter_edit)
+        center_layout.addLayout(center_header)
+        center_layout.addWidget(self.table_stack, stretch=1)
+        center_layout.addLayout(self.action_layout)
+        center_panel.setLayout(center_layout)
+
+        self.details_panel = DetailsPanel()
+        self.details_panel.setMinimumWidth(280)
+        self.details_panel.download_abstract_clicked.connect(self._download_current_abstract)
+        self.details_panel.open_pdf_clicked.connect(self._open_current_pdf)
+        self.details_panel.copy_bib_clicked.connect(self._copy_current_bibtex)
+        self.details_panel.reveal_pdf_clicked.connect(self._reveal_current_pdf)
+        self.details_panel.reveal_bib_clicked.connect(self._reveal_current_bib)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(8)
+        splitter.addWidget(filter_panel)
+        splitter.addWidget(center_panel)
+        splitter.addWidget(self.details_panel)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
+        layout.addWidget(splitter, stretch=1)
+
+        self.log_panel = CollapsibleLogPanel()
+        self.log_panel.cancel_abstracts_clicked.connect(self._cancel_abstract_download)
+        self.log_panel.cancel_pdfs_clicked.connect(self._cancel_pdf_download)
+        self.log_view = self.log_panel.log_view
+        self.status_label = self.log_panel.status_label
+        layout.addWidget(self.log_panel)
 
         root.setLayout(layout)
         self.setCentralWidget(root)
 
         self._add_filter()
+        self._update_summary()
+        self._update_empty_state()
 
     def _open_file(self, path: str) -> None:
         if not os.path.exists(path):
@@ -210,12 +392,205 @@ class WorkspaceWindow(QMainWindow):
             subprocess.run(["xdg-open", os.path.dirname(path)], check=False)
 
     def _log(self, message: str) -> None:
-        self.log_view.append(message)
+        self.log_panel.append_log(message)
+        progress = self._parse_progress_message(message)
+        if progress:
+            current, total = progress
+            self.log_panel.set_busy(self.status_label.text(), current, total)
+
+    def _parse_progress_message(self, message: str) -> Optional[tuple[int, int]]:
+        if not message.startswith("[") or "/" not in message:
+            return None
+        prefix = message.split("]", 1)[0].lstrip("[")
+        parts = prefix.split("/", 1)
+        if len(parts) != 2:
+            return None
+        try:
+            current = int(parts[0])
+            total = int(parts[1])
+        except ValueError:
+            return None
+        return current, total
+
+    def _selected_count(self) -> int:
+        return len(reconcile_selected_ids(self._current_rows, self._selected_paper_ids))
+
+    def _update_summary(self) -> None:
+        rows_for_summary = self._all_rows if self._all_rows else self._current_rows
+        filtered_count = None
+        visible_count = None
+        if self._all_rows:
+            filtered_count = len(self._filtered_rows)
+            visible_count = len(self._current_rows)
+        self.summary_strip.set_summary(
+            summarize_rows(rows_for_summary),
+            self._selected_count(),
+            filtered_count=filtered_count,
+            visible_count=visible_count,
+        )
+
+    def _update_empty_state(self) -> None:
+        if not self.storage or not self.conf:
+            self._empty_action = "dataset"
+            self.empty_state.set_content(
+                "Choose a dataset to start",
+                "Select a base folder, conference, and year before fetching papers.",
+                "Choose dataset",
+            )
+            self.table_stack.setCurrentWidget(self.empty_state)
+            return
+        if not self._all_rows:
+            self._empty_action = "dataset"
+            self.empty_state.set_content(
+                "Fetch this dataset",
+                "Open Datasets and fetch the paper list before browsing papers.",
+                "Open datasets",
+            )
+            self.table_stack.setCurrentWidget(self.empty_state)
+            return
+        if not self._current_rows:
+            if self.quick_filter_edit.text().strip():
+                self._empty_action = "clear_quick_filter"
+                self.empty_state.set_content(
+                    "No papers match the quick filter",
+                    "Clear the quick filter or try a broader keyword.",
+                    "Clear search",
+                )
+                self.table_stack.setCurrentWidget(self.empty_state)
+                return
+            self._empty_action = "clear_filters"
+            self.empty_state.set_content(
+                "No papers match the current filters",
+                "Try clearing filters or lowering the minimum Should match count.",
+                "Clear filters",
+            )
+            self.table_stack.setCurrentWidget(self.empty_state)
+            return
+        self.table_stack.setCurrentWidget(self.table)
+
+    def _handle_empty_state_action(self) -> None:
+        if self._empty_action == "fetch":
+            self._fetch_list()
+        elif self._empty_action == "clear_filters":
+            self._clear_filters()
+        elif self._empty_action == "clear_quick_filter":
+            self.quick_filter_edit.clear()
+        else:
+            self._open_dataset_dialog()
+
+    def _capture_selected_ids(self) -> None:
+        self._selected_paper_ids = self.paper_model.selected_ids()
+        self._selected_paper_ids = reconcile_selected_ids(
+            self._current_rows,
+            self._selected_paper_ids,
+        )
+
+    def _on_model_selection_changed(self) -> None:
+        if self._rendering_rows:
+            return
+        self._selected_paper_ids = self.paper_model.selected_ids()
+        self._update_summary()
+
+    def _current_row(self) -> Optional[dict]:
+        row_idx = self.table.currentIndex().row()
+        if row_idx < 0 or row_idx >= len(self._current_rows):
+            return None
+        return self._current_rows[row_idx]
+
+    def _update_details(self, row_idx: Optional[int] = None) -> None:
+        if row_idx is None:
+            row = self._current_row()
+        elif 0 <= row_idx < len(self._current_rows):
+            row = self._current_rows[row_idx]
+        else:
+            row = None
+        self.details_panel.set_row(row)
+
+    def _focus_row(self, row_idx: int) -> None:
+        if 0 <= row_idx < len(self._current_rows):
+            self.table.setCurrentIndex(self.paper_model.index(row_idx, 1))
+            self._update_details(row_idx)
+
+    def _copy_bibtex_for_row(self, row: dict) -> None:
+        bibtex = row.get("bibtex")
+        bib_path = row.get("bib_path")
+        if not bibtex and bib_path and os.path.exists(bib_path):
+            with open(bib_path, "r", encoding="utf-8") as f:
+                bibtex = f.read()
+        if bibtex:
+            QGuiApplication.clipboard().setText(bibtex)
+            if bib_path:
+                self._log(f"Copied bibtex: {bib_path}")
+            else:
+                self._log("Copied bibtex to clipboard")
+
+    def _download_current_abstract(self) -> None:
+        row = self._current_row()
+        abstract = row.get("abstract") if row else None
+        if abstract:
+            QGuiApplication.clipboard().setText(str(abstract))
+            self.details_panel.set_feedback("Abstract copied to clipboard.")
+            self._log("Copied abstract to clipboard")
+        elif row:
+            self._download_abstracts_for_rows([row])
+
+    def _open_current_pdf(self) -> None:
+        row = self._current_row()
+        pdf_path = row.get("pdf_path") if row else None
+        if pdf_path:
+            self._open_file(pdf_path)
+        elif row:
+            self._download_pdfs_for_rows([row])
+
+    def _copy_current_bibtex(self) -> None:
+        row = self._current_row()
+        if row:
+            if row.get("bibtex") or row.get("bib_path"):
+                self._copy_bibtex_for_row(row)
+                self.details_panel.set_feedback("BibTeX copied to clipboard.")
+            else:
+                self._export_bibtex_for_rows([row])
+
+    def _reveal_current_pdf(self) -> None:
+        row = self._current_row()
+        pdf_path = row.get("pdf_path") if row else None
+        if pdf_path:
+            self._reveal_in_folder(pdf_path)
+
+    def _reveal_current_bib(self) -> None:
+        row = self._current_row()
+        bib_path = row.get("bib_path") if row else None
+        if bib_path:
+            self._reveal_in_folder(bib_path)
+
+    def _cancel_abstract_download(self) -> None:
+        if self.abstract_cancel_token:
+            self.abstract_cancel_token.cancel()
+            self._log("Canceling abstract download...")
+
+    def _cancel_pdf_download(self) -> None:
+        if self.pdf_cancel_token:
+            self.pdf_cancel_token.cancel()
+            self._log("Canceling PDF download...")
+
+    def _refresh_download_controls(self, fallback: str = "Ready") -> None:
+        abstract_running = self.abstract_cancel_token is not None
+        pdf_running = self.pdf_cancel_token is not None
+        self.log_panel.show_cancel_abstracts(abstract_running)
+        self.log_panel.show_cancel_pdfs(pdf_running)
+        if abstract_running and pdf_running:
+            self.log_panel.set_busy("Downloading abstracts and PDFs...")
+        elif abstract_running:
+            self.log_panel.set_busy("Downloading abstracts...")
+        elif pdf_running:
+            self.log_panel.set_busy("Downloading PDFs...")
+        else:
+            self.log_panel.set_ready(fallback)
 
     def _ensure_ready(self) -> bool:
         if self.storage and self.conf:
             return True
-        QMessageBox.warning(self, "Missing", "Please open Settings first.")
+        QMessageBox.warning(self, "Missing", "Please choose a dataset first.")
         return False
 
     def _start_worker(self, fn, on_done, on_error, *args) -> None:
@@ -227,17 +602,30 @@ class WorkspaceWindow(QMainWindow):
 
     def _refresh_status(self) -> None:
         if not self.conf or not self.storage:
-            self.status_label.setText("No conference loaded. Click Settings.")
-            self.fetch_btn.setEnabled(False)
+            self.top_bar.set_dataset("No dataset selected")
+            self.status_label.setText("No dataset loaded")
+            self._update_empty_state()
+            self._update_summary()
             return
         count = self.storage.count_papers()
+        self.top_bar.set_dataset(f"{self.conf.name} {self.storage.year}")
         self.status_label.setText(
             f"Loaded: {self.conf.name} {self.storage.year} (papers: {count})"
         )
-        self.fetch_btn.setEnabled(True)
+        self._update_empty_state()
+        self._update_summary()
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self)
+        result = dialog.exec()
+        apply_theme(self)
+        if result != QDialog.DialogCode.Accepted:
+            return
+        if self.conf:
+            self.conf.request_delay = dialog.request_delay_ms() / 1000.0
+
+    def _open_dataset_dialog(self) -> None:
+        dialog = DatasetDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         selection = dialog.selection()
@@ -252,12 +640,20 @@ class WorkspaceWindow(QMainWindow):
         self.base_dir = selection.base_dir
         self.storage = PaperStorage(self.base_dir, conf.slug, selection.year)
         self._all_rows = []
+        self._filtered_rows = []
+        self._current_rows = []
+        self._selected_paper_ids.clear()
+        self.details_panel.set_row(None)
         self._refresh_status()
-        self._load_papers(force_refresh=True)
+        if selection.fetch_after_select:
+            self._fetch_list()
+        else:
+            self._load_papers(force_refresh=True)
 
     def _fetch_list(self) -> None:
         if not self._ensure_ready():
             return
+        self._set_rows_loading(True, "Fetching paper list...")
         self._start_worker(
             self._fetch_list_task,
             self._on_fetch_done,
@@ -273,11 +669,12 @@ class WorkspaceWindow(QMainWindow):
     def _on_fetch_done(self, count: int) -> None:
         self._log(f"Loaded {count} papers")
         QMessageBox.information(self, "Done", f"Loaded {count} papers")
+        self._set_rows_loading(False)
         self._refresh_status()
         self._load_papers(force_refresh=True)
 
-    def _add_filter(self) -> None:
-        row = FilterRow()
+    def _add_filter(self, default_role: str = "Must") -> None:
+        row = FilterRow(default_role=default_role)
         row.remove_btn.clicked.connect(lambda: self._remove_filter(row))
         self.filter_rows.append(row)
         self.filter_layout.addWidget(row)
@@ -291,7 +688,7 @@ class WorkspaceWindow(QMainWindow):
     def _clear_filters(self) -> None:
         for row in list(self.filter_rows):
             self._remove_filter(row)
-        self._add_filter()
+        self._add_filter("Must")
         self._load_papers()
 
     def _filter_configs(self) -> List[FilterConfig]:
@@ -314,23 +711,34 @@ class WorkspaceWindow(QMainWindow):
     def _set_rows_loading(self, loading: bool, message: Optional[str] = None) -> None:
         self._rows_loading = loading
         self.table.setEnabled(not loading)
-        self.fetch_btn.setEnabled(not loading and self.conf is not None and self.storage is not None)
         self.apply_filter_btn.setEnabled(not loading)
         self.clear_filter_btn.setEnabled(not loading)
         self.abstract_btn.setEnabled(not loading)
         self.pdf_btn.setEnabled(not loading)
         self.bib_btn.setEnabled(not loading)
         self.export_btn.setEnabled(not loading)
+        self.quick_filter_edit.setEnabled(not loading)
+        self.select_all_btn.setEnabled(not loading)
+        self.select_none_btn.setEnabled(not loading)
+        self.invert_btn.setEnabled(not loading)
         if loading:
             self.status_label.setText(message or "Loading papers...")
+            self.log_panel.set_busy(message or "Loading papers...")
         else:
+            self._refresh_download_controls()
             self._refresh_status()
 
     def _load_papers(self, force_refresh: bool = False) -> None:
+        self._capture_selected_ids()
         if not self.storage:
             self._all_rows = []
-            self.table.setRowCount(0)
+            self._filtered_rows = []
+            self.paper_model.set_rows([], selected_ids=set())
             self._current_rows = []
+            self._selected_paper_ids.clear()
+            self.details_panel.set_row(None)
+            self._update_summary()
+            self._update_empty_state()
             return
         if self._rows_loading:
             self._pending_row_reload = True
@@ -361,50 +769,58 @@ class WorkspaceWindow(QMainWindow):
     ) -> PaperLoadResult:
         return self.service.load_papers(storage, cached_rows, configs, min_should_match)
 
-    def _render_rows(self, rows: List[dict]) -> None:
-        self._current_rows = rows
-        self.table.setUpdatesEnabled(False)
-        try:
-            self.table.clearContents()
-            self.table.setRowCount(len(rows))
-            for row_idx, row in enumerate(rows):
-                select_item = QTableWidgetItem()
-                select_item.setFlags(
-                    select_item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled
-                )
-                select_item.setCheckState(Qt.CheckState.Unchecked)
+    def _schedule_quick_filter(self) -> None:
+        self.quick_filter_timer.start()
 
-                authors = row.get("authors_text") or ""
-                abstract_status = "Yes" if row["abstract_status"] else "No"
-                pdf_path = row.get("pdf_path")
-                bib_path = row.get("bib_path")
-                pdf_status = "Yes" if row.get("has_pdf") else "No"
-                bib_status = "Yes" if row.get("has_bib") else "No"
-                self.table.setItem(row_idx, 0, select_item)
-                self.table.setItem(row_idx, 1, QTableWidgetItem(row["title"]))
-                self.table.setItem(row_idx, 2, QTableWidgetItem(row.get("category_text") or ""))
-                self.table.setItem(row_idx, 3, QTableWidgetItem(authors))
-                abstract_item = QTableWidgetItem(abstract_status)
-                if row["abstract_status"]:
-                    abstract_text = row.get("abstract") or ""
-                    abstract_item.setToolTip(abstract_text)
-                else:
-                    abstract_item.setToolTip("Click to download abstract")
-                self.table.setItem(row_idx, 4, abstract_item)
-                pdf_item = QTableWidgetItem(pdf_status)
-                if pdf_path:
-                    pdf_item.setToolTip(f"Double-click to open\nCtrl+Click to reveal\n{pdf_path}")
-                else:
-                    pdf_item.setToolTip("Click to download PDF")
-                self.table.setItem(row_idx, 5, pdf_item)
-                bib_item = QTableWidgetItem(bib_status)
-                if bib_path:
-                    bib_item.setToolTip(f"Double-click to copy bibtex\nCtrl+Click to reveal\n{bib_path}")
-                else:
-                    bib_item.setToolTip("Click to download bibtex")
-                self.table.setItem(row_idx, 6, bib_item)
+    def _apply_quick_filter(self) -> None:
+        self._capture_selected_ids()
+        self._render_rows(self._quick_filtered_rows())
+
+    def _prepare_quick_search(self, rows: List[dict]) -> None:
+        for row in rows:
+            row["_quick_search"] = " ".join(
+                str(row.get(key) or "")
+                for key in (
+                    "title",
+                    "category_text",
+                    "authors_text",
+                    "abstract",
+                    "keywords_text",
+                )
+            ).casefold()
+
+    def _quick_filtered_rows(self) -> List[dict]:
+        rows = self._filtered_rows if self._all_rows else []
+        query = self.quick_filter_edit.text().strip().casefold()
+        if not query:
+            return list(rows)
+        terms = query.split()
+        return [row for row in rows if self._row_matches_quick_filter(row, terms)]
+
+    def _row_matches_quick_filter(self, row: dict, terms: List[str]) -> bool:
+        haystack = row.get("_quick_search")
+        if not haystack:
+            self._prepare_quick_search([row])
+            haystack = row.get("_quick_search") or ""
+        return all(term in haystack for term in terms)
+
+    def _render_rows(self, rows: List[dict]) -> None:
+        self._selected_paper_ids = reconcile_selected_ids(
+            rows,
+            self._selected_paper_ids,
+        )
+        self._current_rows = rows
+        self._rendering_rows = True
+        try:
+            self.paper_model.set_rows(
+                rows,
+                selected_ids=self._selected_paper_ids,
+            )
         finally:
-            self.table.setUpdatesEnabled(True)
+            self._rendering_rows = False
+        self._update_summary()
+        self._update_empty_state()
+        self._update_details(self.table.currentIndex().row())
 
     def _finish_pending_row_load(self) -> None:
         if not self._pending_row_reload:
@@ -420,8 +836,13 @@ class WorkspaceWindow(QMainWindow):
             self._finish_pending_row_load()
             return
         self._all_rows = result.all_rows
-        self._render_rows(result.filtered_rows)
-        self._log(f"Showing {len(result.filtered_rows)} of {len(result.all_rows)} papers")
+        self._prepare_quick_search(self._all_rows)
+        self._filtered_rows = result.filtered_rows
+        self._render_rows(self._quick_filtered_rows())
+        self._log(
+            f"Showing {len(self._current_rows)} of {len(result.filtered_rows)} filtered papers "
+            f"({len(result.all_rows)} total)"
+        )
         self._finish_pending_row_load()
 
     def _on_load_papers_error(self, message: str) -> None:
@@ -430,76 +851,36 @@ class WorkspaceWindow(QMainWindow):
         self._log(f"Error: {message}")
         self._finish_pending_row_load()
 
-    def _on_table_clicked(self, row_idx: int, column: int) -> None:
+    def _on_table_double_clicked(self, index) -> None:
+        row_idx = index.row()
         if row_idx >= len(self._current_rows):
             return
-        row = self._current_rows[row_idx]
-        modifiers = QGuiApplication.keyboardModifiers()
-        if column == 4:
-            if row.get("abstract_status"):
-                return
-            self._download_abstracts_for_rows([row])
-        elif column == 5:
-            pdf_path = row.get("pdf_path")
-            if modifiers & Qt.KeyboardModifier.ControlModifier and pdf_path:
-                self._reveal_in_folder(pdf_path)
-                return
-            if row.get("pdf_status") and pdf_path:
-                return
-            self._download_pdfs_for_rows([row])
-        elif column == 6:
-            bib_path = row.get("bib_path")
-            if modifiers & Qt.KeyboardModifier.ControlModifier and bib_path:
-                self._reveal_in_folder(bib_path)
-                return
-            if bib_path:
-                return
-            self._export_bibtex_for_rows([row])
-
-    def _on_table_double_clicked(self, row_idx: int, column: int) -> None:
-        if row_idx >= len(self._current_rows):
-            return
-        row = self._current_rows[row_idx]
-        if column == 5:
-            pdf_path = row.get("pdf_path")
-            if pdf_path:
-                self._open_file(pdf_path)
-        elif column == 6:
-            bibtex = row.get("bibtex")
-            bib_path = row.get("bib_path")
-            if not bibtex and bib_path and os.path.exists(bib_path):
-                with open(bib_path, "r", encoding="utf-8") as f:
-                    bibtex = f.read()
-            if bibtex:
-                QGuiApplication.clipboard().setText(bibtex)
-                if bib_path:
-                    self._log(f"Copied bibtex: {bib_path}")
-                else:
-                    self._log("Copied bibtex to clipboard")
+        self._update_details(row_idx)
 
     def _set_selection_state(self, checked: bool) -> None:
-        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-        for row_idx in range(self.table.rowCount()):
-            item = self.table.item(row_idx, 0)
-            if item:
-                item.setCheckState(state)
+        visible_ids = {paper_id_for_row(row) for row in self._current_rows}
+        if checked:
+            self._selected_paper_ids.update(visible_ids)
+        else:
+            self._selected_paper_ids.difference_update(visible_ids)
+        self.paper_model.set_selected_ids(self._selected_paper_ids)
+        self._update_summary()
 
     def _invert_selection(self) -> None:
-        for row_idx in range(self.table.rowCount()):
-            item = self.table.item(row_idx, 0)
-            if not item:
-                continue
-            item.setCheckState(
-                Qt.CheckState.Unchecked
-                if item.checkState() == Qt.CheckState.Checked
-                else Qt.CheckState.Checked
-            )
+        for row in self._current_rows:
+            paper_id = paper_id_for_row(row)
+            if paper_id in self._selected_paper_ids:
+                self._selected_paper_ids.discard(paper_id)
+            else:
+                self._selected_paper_ids.add(paper_id)
+        self.paper_model.set_selected_ids(self._selected_paper_ids)
+        self._update_summary()
 
     def _selected_rows(self) -> List[dict]:
+        self._capture_selected_ids()
         selected = []
-        for row_idx, row in enumerate(self._current_rows):
-            item = self.table.item(row_idx, 0)
-            if item and item.checkState() == Qt.CheckState.Checked:
+        for row in self._current_rows:
+            if paper_id_for_row(row) in self._selected_paper_ids:
                 selected.append(row)
         return selected
 
@@ -513,8 +894,11 @@ class WorkspaceWindow(QMainWindow):
 
     def _download_abstracts(self) -> None:
         if self.abstract_cancel_token:
-            self.abstract_cancel_token.cancel()
-            self._log("Canceling abstract download...")
+            QMessageBox.information(
+                self,
+                "Busy",
+                "Abstract download already running. Use the cancel control in the status bar.",
+            )
             return
         if not self._ensure_ready():
             return
@@ -531,7 +915,9 @@ class WorkspaceWindow(QMainWindow):
             QMessageBox.information(self, "Busy", "Abstract download already running.")
             return
         self.abstract_cancel_token = CancelToken()
-        self.abstract_btn.setText("Cancel Download")
+        self._refresh_download_controls()
+        self.log_panel.set_busy("Downloading abstracts...", 0, len(rows))
+        self.log_panel.show_cancel_abstracts(True)
         self._start_worker(
             self._download_abstracts_task,
             self._on_abstracts_done,
@@ -556,7 +942,7 @@ class WorkspaceWindow(QMainWindow):
     def _on_abstracts_done(self, count: int) -> None:
         cancelled = self.abstract_cancel_token.cancelled() if self.abstract_cancel_token else False
         self.abstract_cancel_token = None
-        self.abstract_btn.setText("Download abstracts")
+        self._refresh_download_controls()
         if cancelled:
             QMessageBox.information(self, "Canceled", f"Downloaded {count} abstracts")
         else:
@@ -565,8 +951,11 @@ class WorkspaceWindow(QMainWindow):
 
     def _download_pdfs(self) -> None:
         if self.pdf_cancel_token:
-            self.pdf_cancel_token.cancel()
-            self._log("Canceling PDF download...")
+            QMessageBox.information(
+                self,
+                "Busy",
+                "PDF download already running. Use the cancel control in the status bar.",
+            )
             return
         if not self._ensure_ready():
             return
@@ -583,7 +972,9 @@ class WorkspaceWindow(QMainWindow):
             QMessageBox.information(self, "Busy", "PDF download already running.")
             return
         self.pdf_cancel_token = CancelToken()
-        self.pdf_btn.setText("Cancel Download")
+        self._refresh_download_controls()
+        self.log_panel.set_busy("Downloading PDFs...", 0, len(rows))
+        self.log_panel.show_cancel_pdfs(True)
         self._start_worker(
             self._download_pdfs_task,
             self._on_pdfs_done,
@@ -608,7 +999,7 @@ class WorkspaceWindow(QMainWindow):
     def _on_pdfs_done(self, count: int) -> None:
         cancelled = self.pdf_cancel_token.cancelled() if self.pdf_cancel_token else False
         self.pdf_cancel_token = None
-        self.pdf_btn.setText("Download PDFs")
+        self._refresh_download_controls()
         if cancelled:
             QMessageBox.information(self, "Canceled", f"Downloaded {count} PDFs")
         else:
@@ -627,6 +1018,7 @@ class WorkspaceWindow(QMainWindow):
     def _export_bibtex_for_rows(self, rows: List[dict]) -> None:
         if not self._ensure_ready():
             return
+        self.log_panel.set_busy("Exporting bibtex...", 0, len(rows))
         self._start_worker(
             self._export_bibtex_task,
             self._on_bibtex_done,
@@ -641,23 +1033,26 @@ class WorkspaceWindow(QMainWindow):
         return self.service.export_bibtex(conf, storage, rows, log=log)
 
     def _on_bibtex_done(self, count: int) -> None:
+        self._refresh_download_controls()
         QMessageBox.information(self, "Done", f"Exported {count} bibtex files")
         self._load_papers(force_refresh=True)
 
     def _on_worker_error(self, message: str) -> None:
+        self._set_rows_loading(False)
+        self._refresh_download_controls("Error")
         QMessageBox.critical(self, "Error", message)
         self._log(f"Error: {message}")
 
     def _on_abstracts_error(self, message: str) -> None:
         if self.abstract_cancel_token:
             self.abstract_cancel_token = None
-            self.abstract_btn.setText("Download abstracts")
+        self._refresh_download_controls("Error")
         QMessageBox.critical(self, "Error", message)
         self._log(f"Error: {message}")
 
     def _on_pdfs_error(self, message: str) -> None:
         if self.pdf_cancel_token:
             self.pdf_cancel_token = None
-            self.pdf_btn.setText("Download PDFs")
+        self._refresh_download_controls("Error")
         QMessageBox.critical(self, "Error", message)
         self._log(f"Error: {message}")

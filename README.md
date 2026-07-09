@@ -17,13 +17,12 @@ A minimal PyQt app to fetch conference paper lists, download abstracts/PDFs, and
 ## Features
 
 - Conference adapters: NeurIPS, ICML, ICLR, AAAI, IJCAI, CVPR, ICCV, EMNLP, ACL, NAACL, SIGCOMM, NSDI, OSDI, ATC, FAST, USENIX Security, NDSS, VLDB
-- Workspace UI with filters and selection
-- Filters: Must/Should/Must not + min-should-match
-- Abstract download (hover to preview; click to fetch missing)
-- PDF download (click to fetch; double-click to open; Ctrl+Click to reveal in folder)
-- Bibtex export (click to fetch; double-click to copy; Ctrl+Click to reveal in folder)
+- Workspace-first UI: choose/manage datasets from the empty state or top dataset name, then fetch the paper list
+- Filters: Must/Should/Must not + min-should-match, plus quick search within the current paper list
+- Paper table focused on metadata, with artifact actions moved out of the columns
+- Details panel for full abstract preview, copy/download abstract, download/open PDF, and Bib copy/reveal actions
 - Export selected papers to CSV/JSON/plain text list with field selection and quick copy
-- Cancelable abstract/PDF downloads
+- Status/log area for progress messages and cancelable abstract/PDF downloads
 - Request interval (polite crawling)
 - Output structure per `conference/year`, with SQLite + `pdf/` + `bib/`
 
@@ -47,7 +46,8 @@ uv run -m paper_spider
 
 ## Notes
 
-- Pick a base directory in the Settings dialog; data is stored under `CONFERENCE/YEAR/`.
+- Pick or create a dataset from the workspace empty state or top dataset name; set the base folder in Datasets and use Settings only for request interval.
+- Data is stored under `CONFERENCE/YEAR/`.
 - Abstracts are stored in SQLite; bibtex is stored in SQLite and exported to files.
 
 ## License

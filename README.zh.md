@@ -17,13 +17,12 @@
 ## 功能
 
 - 会议适配器：NeurIPS、ICML、ICLR、AAAI、IJCAI、CVPR、ICCV、EMNLP、ACL、NAACL、SIGCOMM、NSDI、OSDI、ATC、FAST、USENIX Security、NDSS、VLDB
-- 工作台式 UI 与论文筛选、选择
-- 筛选条件：Must/Should/Must not + 最小 Should 命中数
-- 摘要下载（悬浮预览；点击缺失项可下载）
-- PDF 下载（点击下载；双击打开；Ctrl+单击定位文件）
-- Bibtex 导出（点击下载；双击复制；Ctrl+单击定位文件）
+- 工作台优先 UI：从空状态或顶部数据集名称选择/管理数据集，再获取论文列表
+- 筛选条件：Must/Should/Must not + 最小 Should 命中数，并支持在当前论文列表内快速搜索
+- 论文表格专注显示元数据，Abstract/PDF/Bib 操作从表格列移出
+- 详情面板可查看完整摘要，并执行摘要复制/下载、PDF 下载/打开、Bib 复制与定位操作
 - 选中论文导出（CSV/JSON/纯文本列表），支持字段选择与一键复制
-- 摘要/PDF 下载可取消
+- 状态/日志区域显示进度，并支持取消摘要/PDF 下载
 - 访问间隔设置（礼貌爬取）
 - 数据按 `会议/年份` 组织：SQLite + `pdf/` + `bib/`
 
@@ -47,7 +46,8 @@ uv run -m paper_spider
 
 ## 说明
 
-- 在 Settings 中选择输出目录；数据会存放在 `会议/年份/` 目录下。
+- 从工作台空状态或顶部数据集名称选择/创建数据集；基础目录在 Datasets 中设置，Settings 只用于设置访问间隔。
+- 数据会存放在 `会议/年份/` 目录下。
 - 摘要存 SQLite；bibtex 同时存 SQLite 并导出到文件。
 
 ## 许可证

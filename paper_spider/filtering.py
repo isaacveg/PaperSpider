@@ -27,9 +27,9 @@ def filter_paper_rows(
     if not configs:
         return list(rows)
 
-    must = [cfg for cfg in configs if cfg.role == "must"]
-    should = [cfg for cfg in configs if cfg.role == "should"]
-    must_not = [cfg for cfg in configs if cfg.role == "must not"]
+    must = [cfg for cfg in configs if _role_key(cfg) == "must"]
+    should = [cfg for cfg in configs if _role_key(cfg) == "should"]
+    must_not = [cfg for cfg in configs if _role_key(cfg) == "must not"]
 
     filtered: List[dict] = []
     for row in rows:
@@ -52,6 +52,10 @@ def _matches(row: dict, cfg: FilterConfig) -> bool:
     if cfg.mode == "contains":
         return contains
     return not contains
+
+
+def _role_key(cfg: FilterConfig) -> str:
+    return cfg.role.replace("_", " ").lower()
 
 
 def _field_text(row: dict, field: str) -> str:
