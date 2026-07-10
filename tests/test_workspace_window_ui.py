@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QRect, QSize, Qt
 from PyQt6.QtGui import QGuiApplication, QImage, QKeySequence, QPainter, QPalette
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
@@ -24,7 +25,12 @@ from PyQt6.QtWidgets import (
 from paper_spider.storage import PaperStorage
 from paper_spider.ui.dataset_dialog import SelectionResult
 from paper_spider.ui.workers import CancelToken
-from paper_spider.ui.workspace_window import FilterRow, SelectHeaderView, WorkspaceWindow
+from paper_spider.ui.workspace_window import (
+    CenteredCheckBoxDelegate,
+    FilterRow,
+    SelectHeaderView,
+    WorkspaceWindow,
+)
 from paper_spider.workspace_service import DownloadBatchResult
 
 
@@ -241,6 +247,30 @@ class WorkspaceWindowUiTests(unittest.TestCase):
 
     def test_table_hides_implicit_vertical_header(self) -> None:
         self.assertTrue(self.window.table.verticalHeader().isHidden())
+
+    def test_paper_and_header_checkboxes_share_the_column_center(self) -> None:
+        delegate = self.window.table.itemDelegateForColumn(1)
+        self.assertIsInstance(delegate, CenteredCheckBoxDelegate)
+        cell_rect = QRect(10, 4, 42, 28)
+        indicator_rect = delegate.indicator_rect(cell_rect, self.window.table)
+
+        self.assertEqual(cell_rect.center(), indicator_rect.center())
+
+    def test_centered_paper_checkbox_remains_clickable(self) -> None:
+        self.window.thread_pool.waitForDone()
+        self.app.processEvents()
+        self.window._render_rows(self._rows())
+        self.window.show()
+        self.app.processEvents()
+        index = self.window.paper_model.index(0, 1)
+
+        QTest.mouseClick(
+            self.window.table.viewport(),
+            Qt.MouseButton.LeftButton,
+            pos=self.window.table.visualRect(index).center(),
+        )
+
+        self.assertEqual({"p1"}, self.window.paper_model.selected_ids())
 
     def test_table_gives_title_priority_over_authors(self) -> None:
         header = self.window.table.horizontalHeader()

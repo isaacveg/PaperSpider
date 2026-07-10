@@ -178,6 +178,15 @@ class PaperTableModelTests(unittest.TestCase):
         self.assertTrue(model.setData(model.index(0, 1), Qt.CheckState.Unchecked, Qt.ItemDataRole.CheckStateRole))
         self.assertEqual(set(), model.selected_ids())
 
+    def test_checkbox_column_requests_center_alignment(self) -> None:
+        model = PaperTableModel()
+        model.set_rows(self.rows, selected_ids=set())
+
+        self.assertEqual(
+            Qt.AlignmentFlag.AlignCenter,
+            model.data(model.index(0, 1), Qt.ItemDataRole.TextAlignmentRole),
+        )
+
     def test_model_reconciles_selection_against_visible_rows(self) -> None:
         model = PaperTableModel()
         model.set_rows([self.rows[0]], selected_ids={"p1", "p2"})

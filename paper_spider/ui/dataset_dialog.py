@@ -30,6 +30,8 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QHeaderView,
     QSizePolicy,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -42,6 +44,18 @@ from .theme import apply_theme
 
 YEAR_MIN = 1980
 YEAR_MAX = 2100
+CONFERENCE_TEXT_INSET = 12
+
+
+class DatasetConferenceDelegate(QStyledItemDelegate):
+    """Keep conference names readable without changing their stored text."""
+
+    text_inset = CONFERENCE_TEXT_INSET
+
+    def paint(self, painter, option, index) -> None:
+        padded_option = QStyleOptionViewItem(option)
+        padded_option.rect = option.rect.adjusted(self.text_inset, 0, 0, 0)
+        super().paint(painter, padded_option, index)
 
 
 @dataclass
@@ -154,6 +168,9 @@ class DatasetDialog(QDialog):
         datasets_layout.addWidget(self.new_dataset_panel)
 
         self.dataset_table = QTableWidget(0, 5)
+        self.dataset_table.setItemDelegateForColumn(
+            0, DatasetConferenceDelegate(self.dataset_table)
+        )
         self.dataset_table.setHorizontalHeaderLabels(
             ["Conference", "Year", "Status", "Papers", "Actions"]
         )

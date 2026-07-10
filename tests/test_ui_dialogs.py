@@ -21,7 +21,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from paper_spider.ui.dataset_dialog import DatasetDialog, DatasetEntry
+from paper_spider.ui.dataset_dialog import (
+    CONFERENCE_TEXT_INSET,
+    DatasetConferenceDelegate,
+    DatasetDialog,
+    DatasetEntry,
+)
 from paper_spider.ui.export_dialog import ExportDialog
 from paper_spider.ui.settings_dialog import SettingsDialog
 
@@ -210,6 +215,9 @@ class DatasetDialogTests(unittest.TestCase):
         ]
 
         self.assertEqual("ACL", dialog.dataset_table.item(row, 0).text())
+        delegate = dialog.dataset_table.itemDelegateForColumn(0)
+        self.assertIsInstance(delegate, DatasetConferenceDelegate)
+        self.assertEqual(CONFERENCE_TEXT_INSET, delegate.text_inset)
         self.assertFalse(
             dialog.dataset_table.item(row, 0).flags() & Qt.ItemFlag.ItemIsUserCheckable
         )

@@ -59,7 +59,7 @@ class PaperTableModel(QAbstractTableModel):
                 if paper_id_for_row(row) in self._selected_ids
                 else Qt.CheckState.Unchecked
             )
-        if role == Qt.ItemDataRole.TextAlignmentRole and column in (0, 5):
+        if role == Qt.ItemDataRole.TextAlignmentRole and column in (0, 1, 5):
             return Qt.AlignmentFlag.AlignCenter
         if role == Qt.ItemDataRole.ToolTipRole and column == 5:
             return self._status_tooltip(row)

@@ -11,7 +11,7 @@ import subprocess
 import sys
 from typing import List, Optional
 
-from PyQt6.QtCore import QRect, QSize, Qt, QThreadPool, QTimer, QUrl
+from PyQt6.QtCore import QEvent, QRect, QSize, Qt, QThreadPool, QTimer, QUrl
 from PyQt6.QtGui import (
     QColor,
     QDesktopServices,
@@ -23,6 +23,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QApplication,
     QComboBox,
     QFrame,
     QHBoxLayout,
@@ -38,6 +39,8 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QStyle,
     QStyleOptionButton,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QStackedWidget,
     QTableView,
     QVBoxLayout,
@@ -169,6 +172,73 @@ class FilterRow(QFrame):
         )
 
 
+def _centered_checkbox_rect(style, widget: QWidget, cell_rect: QRect) -> QRect:
+    indicator = style.subElementRect(
+        QStyle.SubElement.SE_CheckBoxIndicator,
+        QStyleOptionButton(),
+        widget,
+    )
+    indicator.moveCenter(cell_rect.center())
+    return indicator
+
+
+class CenteredCheckBoxDelegate(QStyledItemDelegate):
+    """Draw a native checkbox at the exact center of its table cell."""
+
+    @staticmethod
+    def indicator_rect(cell_rect: QRect, widget: QWidget) -> QRect:
+        return _centered_checkbox_rect(widget.style(), widget, cell_rect)
+
+    def paint(self, painter, option, index) -> None:
+        view_option = QStyleOptionViewItem(option)
+        self.initStyleOption(view_option, index)
+        state = view_option.checkState
+        view_option.features &= ~QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
+        style = option.widget.style() if option.widget else QApplication.style()
+        style.drawControl(
+            QStyle.ControlElement.CE_ItemViewItem,
+            view_option,
+            painter,
+            option.widget,
+        )
+
+        checkbox_option = QStyleOptionButton()
+        checkbox_option.state = QStyle.StateFlag.State_Enabled
+        checkbox_option.state |= (
+            QStyle.StateFlag.State_On
+            if state == Qt.CheckState.Checked
+            else QStyle.StateFlag.State_Off
+        )
+        checkbox_option.rect = _centered_checkbox_rect(
+            style,
+            option.widget,
+            option.rect,
+        )
+        style.drawControl(
+            QStyle.ControlElement.CE_CheckBox,
+            checkbox_option,
+            painter,
+            option.widget,
+        )
+
+    def editorEvent(self, event, model, option, index) -> bool:
+        if not index.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+            return False
+        if event.type() != QEvent.Type.KeyPress or event.key() not in (
+            Qt.Key.Key_Space,
+            Qt.Key.Key_Select,
+        ):
+            return False
+
+        state = index.data(Qt.ItemDataRole.CheckStateRole)
+        next_state = (
+            Qt.CheckState.Unchecked
+            if state == Qt.CheckState.Checked
+            else Qt.CheckState.Checked
+        )
+        return model.setData(index, next_state, Qt.ItemDataRole.CheckStateRole)
+
+
 class SelectHeaderView(QHeaderView):
     def partial_mark_color(self) -> QColor:
         return self.palette().color(QPalette.ColorRole.Highlight)
@@ -205,17 +275,7 @@ class SelectHeaderView(QHeaderView):
             option.state |= QStyle.StateFlag.State_Off
         else:
             option.state |= QStyle.StateFlag.State_Off
-        indicator = self.style().subElementRect(
-            QStyle.SubElement.SE_CheckBoxIndicator,
-            option,
-            self,
-        )
-        option.rect = QRect(
-            rect.center().x() - indicator.width() // 2,
-            rect.center().y() - indicator.height() // 2,
-            indicator.width(),
-            indicator.height(),
-        )
+        option.rect = _centered_checkbox_rect(self.style(), self, rect)
         self.style().drawControl(QStyle.ControlElement.CE_CheckBox, option, painter, self)
         if state == Qt.CheckState.PartiallyChecked:
             self.draw_partial_mark(
@@ -348,6 +408,7 @@ class WorkspaceWindow(QMainWindow):
         self.paper_model.selection_changed.connect(self._on_model_selection_changed)
         self.table = QTableView()
         self.table.setModel(self.paper_model)
+        self.table.setItemDelegateForColumn(1, CenteredCheckBoxDelegate(self.table))
         self.table.verticalHeader().hide()
         self.table.setIconSize(QSize(35, 16))
         self.table.setHorizontalHeader(SelectHeaderView(Qt.Orientation.Horizontal, self.table))
@@ -365,7 +426,7 @@ class WorkspaceWindow(QMainWindow):
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
-        self.table.clicked.connect(lambda index: self._update_details(index.row()))
+        self.table.clicked.connect(self._on_table_clicked)
         self.table.doubleClicked.connect(self._on_table_double_clicked)
         self.table.selectionModel().currentRowChanged.connect(
             lambda current, _previous: self._update_details(current.row())
@@ -955,6 +1016,21 @@ class WorkspaceWindow(QMainWindow):
         pdf_path = row.get("pdf_path")
         if pdf_path:
             self._open_file(str(pdf_path))
+
+    def _on_table_clicked(self, index) -> None:
+        if index.column() == 1:
+            state = index.data(Qt.ItemDataRole.CheckStateRole)
+            next_state = (
+                Qt.CheckState.Unchecked
+                if state == Qt.CheckState.Checked
+                else Qt.CheckState.Checked
+            )
+            self.paper_model.setData(
+                index,
+                next_state,
+                Qt.ItemDataRole.CheckStateRole,
+            )
+        self._update_details(index.row())
 
     def _toggle_header_selection(self, section: int) -> None:
         if section != 1:
