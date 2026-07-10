@@ -123,7 +123,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
             self.window.paper_model.headerData(index, Qt.Orientation.Horizontal)
             for index in range(self.window.paper_model.columnCount())
         ]
-        self.assertEqual(["", "", "Title", "Category", "Authors", "Status"], headers)
+        self.assertEqual(["#", "", "Title", "Category", "Authors", "Status"], headers)
         self.assertEqual(
             "1",
             self.window.paper_model.data(
@@ -138,15 +138,23 @@ class WorkspaceWindowUiTests(unittest.TestCase):
                 Qt.ItemDataRole.DisplayRole,
             ),
         )
-        self.assertEqual(
-            "💬 📄",
+        status_text = self.window.paper_model.data(
+            self.window.paper_model.index(0, 5),
+            Qt.ItemDataRole.DisplayRole,
+        )
+        self.assertNotIn("💬", status_text)
+        self.assertNotIn("📄", status_text)
+        self.assertFalse(
             self.window.paper_model.data(
                 self.window.paper_model.index(0, 5),
-                Qt.ItemDataRole.DisplayRole,
-            ),
+                Qt.ItemDataRole.DecorationRole,
+            ).isNull()
         )
         self.assertEqual("2", self.window.summary_strip.total_value.text())
         self.assertEqual("1", self.window.summary_strip.pdfs_value.text())
+
+    def test_table_hides_implicit_vertical_header(self) -> None:
+        self.assertTrue(self.window.table.verticalHeader().isHidden())
 
     def test_table_gives_title_priority_over_authors(self) -> None:
         header = self.window.table.horizontalHeader()

@@ -10,13 +10,14 @@ from typing import AbstractSet, List, Optional
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, pyqtSignal
 
+from .theme import status_icon
 from .workspace_view_helpers import paper_id_for_row, reconcile_selected_ids
 
 
 class PaperTableModel(QAbstractTableModel):
     selection_changed = pyqtSignal()
 
-    HEADERS = ["", "", "Title", "Category", "Authors", "Status"]
+    HEADERS = ["#", "", "Title", "Category", "Authors", "Status"]
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -62,6 +63,9 @@ class PaperTableModel(QAbstractTableModel):
             return Qt.AlignmentFlag.AlignCenter
         if role == Qt.ItemDataRole.ToolTipRole and column == 5:
             return self._status_tooltip(row)
+        if role == Qt.ItemDataRole.DecorationRole and column == 5:
+            kinds = self._status_kinds(row)
+            return status_icon(kinds) if kinds else None
         if role != Qt.ItemDataRole.DisplayRole:
             return None
         if column == 0:
@@ -73,24 +77,20 @@ class PaperTableModel(QAbstractTableModel):
         if column == 4:
             return row.get("authors_text") or ""
         if column == 5:
-            return self._status_text(row)
+            return ""
         return ""
 
-    def _status_text(self, row: dict) -> str:
-        icons = []
+    def _status_kinds(self, row: dict) -> tuple[str, ...]:
+        kinds = []
         if row.get("abstract_status") or row.get("abstract"):
-            icons.append("💬")
+            kinds.append("abstract")
         if row.get("has_pdf"):
-            icons.append("📄")
-        return " ".join(icons)
+            kinds.append("pdf")
+        return tuple(kinds)
 
     def _status_tooltip(self, row: dict) -> str:
-        labels = []
-        if row.get("abstract_status") or row.get("abstract"):
-            labels.append("Abstract")
-        if row.get("has_pdf"):
-            labels.append("PDF")
-        return ", ".join(labels)
+        labels = {"abstract": "Abstract", "pdf": "PDF"}
+        return ", ".join(labels[kind] for kind in self._status_kinds(row))
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
         if not index.isValid():
@@ -170,6 +170,7 @@ class PaperTableModel(QAbstractTableModel):
     def notify_rows_changed(self, paper_ids: AbstractSet[str]) -> None:
         roles = [
             Qt.ItemDataRole.DisplayRole,
+            Qt.ItemDataRole.DecorationRole,
             Qt.ItemDataRole.ToolTipRole,
             Qt.ItemDataRole.CheckStateRole,
         ]

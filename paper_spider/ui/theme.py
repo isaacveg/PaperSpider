@@ -7,9 +7,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
-from PyQt6.QtCore import QSettings
+from PyQt6.QtCore import QRect, QSettings, Qt
+from PyQt6.QtGui import QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QWidget
 
 from .window_chrome import apply_window_chrome
@@ -61,6 +63,40 @@ def load_appearance(settings: QSettings) -> Appearance:
     theme = str(settings.value("appearance/theme", "Light"))
     accent = str(settings.value("appearance/accent", "Blue"))
     return appearance_from_values(theme, accent)
+
+
+def status_icon(kinds: tuple[str, ...], theme: str | None = None) -> QIcon:
+    resolved_theme = theme or load_appearance(
+        QSettings("PaperSpider", "PaperSpider")
+    ).theme
+    return _status_icon(kinds, resolved_theme)
+
+
+@lru_cache(maxsize=8)
+def _status_icon(kinds: tuple[str, ...], theme: str) -> QIcon:
+    icon_paths = [
+        Path(__file__).with_name("assets")
+        / f"status-{kind}-{'dark' if theme == 'Dark' else 'light'}.svg"
+        for kind in kinds
+    ]
+    if not icon_paths:
+        return QIcon()
+    if len(icon_paths) == 1:
+        return QIcon(icon_paths[0].as_posix())
+
+    icon_size = 16
+    spacing = 3
+    width = len(icon_paths) * icon_size + (len(icon_paths) - 1) * spacing
+    pixmap = QPixmap(width, icon_size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    for index, icon_path in enumerate(icon_paths):
+        QIcon(icon_path.as_posix()).paint(
+            painter,
+            QRect(index * (icon_size + spacing), 0, icon_size, icon_size),
+        )
+    painter.end()
+    return QIcon(pixmap)
 
 
 def build_stylesheet(appearance: Appearance) -> str:

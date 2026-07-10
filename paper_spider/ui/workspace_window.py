@@ -11,7 +11,7 @@ import subprocess
 import sys
 from typing import List, Optional
 
-from PyQt6.QtCore import QRect, Qt, QThreadPool, QTimer, QUrl
+from PyQt6.QtCore import QRect, QSize, Qt, QThreadPool, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices, QGuiApplication, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -296,6 +296,8 @@ class WorkspaceWindow(QMainWindow):
         self.paper_model.selection_changed.connect(self._on_model_selection_changed)
         self.table = QTableView()
         self.table.setModel(self.paper_model)
+        self.table.verticalHeader().hide()
+        self.table.setIconSize(QSize(35, 16))
         self.table.setHorizontalHeader(SelectHeaderView(Qt.Orientation.Horizontal, self.table))
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
