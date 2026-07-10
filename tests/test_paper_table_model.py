@@ -97,6 +97,28 @@ class PaperTableModelTests(unittest.TestCase):
             self.assertNotIn("💬", status_text)
             self.assertNotIn("📄", status_text)
 
+    def test_status_exposes_accessible_text_and_description_for_every_state(self) -> None:
+        model = PaperTableModel()
+        model.set_rows(self.rows, selected_ids=set())
+
+        expected = [
+            "Abstract and PDF available",
+            "Abstract available",
+            "PDF available",
+            "No abstract or PDF available",
+        ]
+        for row, accessible_text in enumerate(expected):
+            index = model.index(row, 5)
+            self.assertEqual(
+                accessible_text,
+                model.data(index, Qt.ItemDataRole.AccessibleTextRole),
+            )
+            self.assertEqual(
+                f"Paper status: {accessible_text}",
+                model.data(index, Qt.ItemDataRole.AccessibleDescriptionRole),
+            )
+            self.assertEqual("", model.data(index, Qt.ItemDataRole.DisplayRole))
+
     def test_status_decorations_and_tooltips_cover_every_availability_state(self) -> None:
         model = PaperTableModel()
         model.set_rows(self.rows, selected_ids=set())
@@ -166,12 +188,16 @@ class PaperTableModelTests(unittest.TestCase):
     def test_model_notifies_status_updates_for_specific_papers(self) -> None:
         model = PaperTableModel()
         model.set_rows(self.rows, selected_ids=set())
-        changed: list[tuple[int, int]] = []
-        model.dataChanged.connect(lambda top, bottom, _roles: changed.append((top.row(), bottom.row())))
+        changed: list[tuple[int, int, list[int]]] = []
+        model.dataChanged.connect(
+            lambda top, bottom, roles: changed.append((top.row(), bottom.row(), roles))
+        )
 
         model.notify_rows_changed({"p1"})
 
-        self.assertEqual([(0, 0)], changed)
+        self.assertEqual([(0, 0)], [(top, bottom) for top, bottom, _roles in changed])
+        self.assertIn(Qt.ItemDataRole.AccessibleTextRole, changed[0][2])
+        self.assertIn(Qt.ItemDataRole.AccessibleDescriptionRole, changed[0][2])
 
 
 if __name__ == "__main__":

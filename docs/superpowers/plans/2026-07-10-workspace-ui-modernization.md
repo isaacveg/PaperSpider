@@ -219,4 +219,3 @@ Expected: all tests pass and diff check produces no output.
 - [ ] **Step 5: Commit**
 
 Run: `git add paper_spider tests && git commit -m "fix: polish workspace visual integration"` when Task 5 changes files; otherwise record that no additional commit is necessary.
-

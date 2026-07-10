@@ -63,6 +63,10 @@ class PaperTableModel(QAbstractTableModel):
             return Qt.AlignmentFlag.AlignCenter
         if role == Qt.ItemDataRole.ToolTipRole and column == 5:
             return self._status_tooltip(row)
+        if role == Qt.ItemDataRole.AccessibleTextRole and column == 5:
+            return self._status_accessible_text(row)
+        if role == Qt.ItemDataRole.AccessibleDescriptionRole and column == 5:
+            return f"Paper status: {self._status_accessible_text(row)}"
         if role == Qt.ItemDataRole.DecorationRole and column == 5:
             kinds = self._status_kinds(row)
             return status_icon(kinds) if kinds else None
@@ -91,6 +95,16 @@ class PaperTableModel(QAbstractTableModel):
     def _status_tooltip(self, row: dict) -> str:
         labels = {"abstract": "Abstract", "pdf": "PDF"}
         return ", ".join(labels[kind] for kind in self._status_kinds(row))
+
+    def _status_accessible_text(self, row: dict) -> str:
+        kinds = self._status_kinds(row)
+        if kinds == ("abstract", "pdf"):
+            return "Abstract and PDF available"
+        if kinds == ("abstract",):
+            return "Abstract available"
+        if kinds == ("pdf",):
+            return "PDF available"
+        return "No abstract or PDF available"
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
         if not index.isValid():
@@ -172,6 +186,8 @@ class PaperTableModel(QAbstractTableModel):
             Qt.ItemDataRole.DisplayRole,
             Qt.ItemDataRole.DecorationRole,
             Qt.ItemDataRole.ToolTipRole,
+            Qt.ItemDataRole.AccessibleTextRole,
+            Qt.ItemDataRole.AccessibleDescriptionRole,
             Qt.ItemDataRole.CheckStateRole,
         ]
         for row_idx, row in enumerate(self._rows):

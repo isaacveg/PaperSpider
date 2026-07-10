@@ -95,4 +95,3 @@ All existing 141 tests must continue to pass. Visual QA renders empty/populated 
 - No MVVM framework, dependency injection container, web frontend, ORM, asyncio integration, or plugin system.
 - No changes to conference parsing, storage schema, network behavior, or artifact formats.
 - No attempt to disable macOS Accessibility APIs as a crash workaround.
-

@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QLabel, QLineEdit, QWidget
 
-from paper_spider.ui.theme import Appearance, apply_theme, build_stylesheet
+from paper_spider.ui.theme import Appearance, appearance_from_values, apply_theme, build_stylesheet
 from paper_spider.ui.workspace_view_helpers import WorkspaceSummary
 from paper_spider.ui.workspace_widgets import CollapsibleLogPanel, DetailsPanel, SummaryStrip, TopBar
 
@@ -194,6 +194,20 @@ class WorkspaceWidgetsTests(unittest.TestCase):
         self.assertIn("QLineEdit#quickFilterEdit", stylesheet)
         self.assertIn("QComboBox#filterRoleCombo", stylesheet)
         self.assertIn("QWidget#minPreferredRow", stylesheet)
+
+    def test_theme_preserves_native_checkbox_and_table_indicators(self) -> None:
+        for theme in ("Light", "Dark"):
+            with self.subTest(theme=theme):
+                stylesheet = build_stylesheet(appearance_from_values(theme, "Blue"))
+
+                self.assertNotIn("QCheckBox::indicator", stylesheet)
+                self.assertNotIn("QTableView::indicator", stylesheet)
+
+    def test_theme_omits_removed_settings_sidebar_navigation_styles(self) -> None:
+        stylesheet = build_stylesheet(appearance_from_values("Light", "Blue"))
+
+        self.assertNotIn("settingsSidebar", stylesheet)
+        self.assertNotIn("settingsNavButton", stylesheet)
 
 
 if __name__ == "__main__":

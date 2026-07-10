@@ -12,7 +12,15 @@ import sys
 from typing import List, Optional
 
 from PyQt6.QtCore import QRect, QSize, Qt, QThreadPool, QTimer, QUrl
-from PyQt6.QtGui import QDesktopServices, QGuiApplication, QKeySequence, QShortcut
+from PyQt6.QtGui import (
+    QColor,
+    QDesktopServices,
+    QGuiApplication,
+    QKeySequence,
+    QPalette,
+    QPen,
+    QShortcut,
+)
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -83,7 +91,7 @@ class FilterRow(QFrame):
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("contains", "contains")
         self.mode_combo.addItem("does not contain", "not_contains")
-        self.mode_combo.setMinimumWidth(100)
+        self.mode_combo.setMinimumWidth(116)
         self.mode_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self.role_combo = QComboBox()
@@ -131,16 +139,22 @@ class FilterRow(QFrame):
         self.sentence_row.setLayout(sentence_layout)
 
         self.criteria_row = QWidget()
-        criteria_layout = QHBoxLayout()
+        criteria_layout = QVBoxLayout()
         criteria_layout.setContentsMargins(0, 0, 0, 0)
         criteria_layout.setSpacing(4)
-        criteria_layout.addWidget(self.field_combo, stretch=3)
-        criteria_layout.addWidget(self.mode_combo, stretch=3)
-        criteria_layout.addWidget(self.text_edit, stretch=4)
+        criteria_layout.addWidget(self.field_combo)
+        criteria_layout.addWidget(self.mode_combo)
         self.criteria_row.setLayout(criteria_layout)
+
+        self.text_row = QWidget()
+        text_layout = QHBoxLayout()
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.addWidget(self.text_edit)
+        self.text_row.setLayout(text_layout)
 
         layout.addWidget(self.sentence_row)
         layout.addWidget(self.criteria_row)
+        layout.addWidget(self.text_row)
 
         self.setLayout(layout)
 
@@ -155,6 +169,24 @@ class FilterRow(QFrame):
 
 
 class SelectHeaderView(QHeaderView):
+    def partial_mark_color(self) -> QColor:
+        return self.palette().color(QPalette.ColorRole.Highlight)
+
+    @staticmethod
+    def draw_partial_mark(painter, rect: QRect, color: QColor) -> None:
+        painter.save()
+        pen = QPen(color, 2)
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        painter.setPen(pen)
+        inset = max(3, rect.width() // 4)
+        painter.drawLine(
+            rect.left() + inset,
+            rect.center().y(),
+            rect.right() - inset,
+            rect.center().y(),
+        )
+        painter.restore()
+
     def paintSection(self, painter, rect: QRect, logicalIndex: int) -> None:
         super().paintSection(painter, rect, logicalIndex)
         if logicalIndex != 1 or self.model() is None:
@@ -169,7 +201,7 @@ class SelectHeaderView(QHeaderView):
         if state == Qt.CheckState.Checked:
             option.state |= QStyle.StateFlag.State_On
         elif state == Qt.CheckState.PartiallyChecked:
-            option.state |= QStyle.StateFlag.State_NoChange
+            option.state |= QStyle.StateFlag.State_Off
         else:
             option.state |= QStyle.StateFlag.State_Off
         indicator = self.style().subElementRect(
@@ -184,6 +216,12 @@ class SelectHeaderView(QHeaderView):
             indicator.height(),
         )
         self.style().drawControl(QStyle.ControlElement.CE_CheckBox, option, painter, self)
+        if state == Qt.CheckState.PartiallyChecked:
+            self.draw_partial_mark(
+                painter,
+                option.rect,
+                self.partial_mark_color(),
+            )
 
 
 class WorkspaceWindow(QMainWindow):

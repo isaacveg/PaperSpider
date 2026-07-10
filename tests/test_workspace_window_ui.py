@@ -7,14 +7,16 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QGuiApplication, QKeySequence
+from PyQt6.QtCore import QRect, QSize, Qt
+from PyQt6.QtGui import QGuiApplication, QImage, QKeySequence, QPainter, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
     QHeaderView,
     QPushButton,
     QScrollArea,
+    QStyle,
+    QStyleOptionComboBox,
     QTableView,
     QWidget,
 )
@@ -22,7 +24,7 @@ from PyQt6.QtWidgets import (
 from paper_spider.storage import PaperStorage
 from paper_spider.ui.dataset_dialog import SelectionResult
 from paper_spider.ui.workers import CancelToken
-from paper_spider.ui.workspace_window import FilterRow, WorkspaceWindow
+from paper_spider.ui.workspace_window import FilterRow, SelectHeaderView, WorkspaceWindow
 from paper_spider.workspace_service import DownloadBatchResult
 
 
@@ -31,6 +33,20 @@ def app() -> QApplication:
     if existing is not None:
         return existing
     return QApplication([])
+
+
+def required_combo_text_width(combo) -> int:
+    option = QStyleOptionComboBox()
+    option.initFrom(combo)
+    option.currentText = combo.currentText()
+    metrics = combo.fontMetrics()
+    text_size = QSize(metrics.horizontalAdvance(option.currentText), metrics.height())
+    return combo.style().sizeFromContents(
+        QStyle.ContentsType.CT_ComboBox,
+        option,
+        text_size,
+        combo,
+    ).width()
 
 
 class _FakeConference:
@@ -124,6 +140,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
     def test_workspace_resizes_to_laptop_width_without_clipping_filter_controls(self) -> None:
         self.window.thread_pool.waitForDone()
         self.app.processEvents()
+        self.window.filter_rows[0].mode_combo.setCurrentText("does not contain")
         self.window.resize(1100, 720)
         self.window.show()
         self.app.processEvents()
@@ -147,6 +164,19 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         ):
             right_edge = control.mapTo(self.window.filter_panel, control.rect().bottomRight()).x()
             self.assertLessEqual(right_edge, filter_right)
+        self.assertEqual(
+            "does not contain", self.window.filter_rows[0].mode_combo.currentText()
+        )
+        self.assertEqual("Any field", self.window.filter_rows[0].field_combo.currentText())
+        for combo in (
+            self.window.filter_rows[0].field_combo,
+            self.window.filter_rows[0].mode_combo,
+        ):
+            self.assertGreaterEqual(combo.width(), required_combo_text_width(combo))
+        self.assertGreaterEqual(
+            self.window.filter_rows[0].mode_combo.width(),
+            self.window.filter_rows[0].mode_combo.minimumSizeHint().width(),
+        )
 
         action_bounds = self.window.download_action_group.contentsRect()
         for button in (
@@ -414,7 +444,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
 
         self.assertIsInstance(row, QFrame)
         self.assertEqual("filterRuleCard", row.objectName())
-        self.assertEqual(2, row.layout().count())
+        self.assertEqual(3, row.layout().count())
         self.assertEqual("papers where", row.sentence_label.text())
         self.assertIs(row.layout().itemAt(1).widget(), row.criteria_row)
         self.assertEqual("x", row.remove_btn.text())
@@ -423,10 +453,61 @@ class WorkspaceWindowUiTests(unittest.TestCase):
             criteria_layout.indexOf(row.field_combo),
             criteria_layout.indexOf(row.mode_combo),
         )
-        self.assertLess(
-            criteria_layout.indexOf(row.mode_combo),
-            criteria_layout.indexOf(row.text_edit),
-        )
+        self.assertIs(row.layout().itemAt(2).widget(), row.text_row)
+
+    def test_filter_row_preserves_full_mode_label_at_300_pixels(self) -> None:
+        from paper_spider.ui.theme import appearance_from_values, build_stylesheet
+
+        for theme in ("Light", "Dark"):
+            with self.subTest(theme=theme):
+                row = FilterRow()
+                row.setStyleSheet(
+                    build_stylesheet(appearance_from_values(theme, "Blue"))
+                )
+                row.mode_combo.setCurrentText("does not contain")
+                row.resize(300, row.sizeHint().height())
+                row.show()
+                self.app.processEvents()
+
+                self.assertEqual(300, row.width())
+                self.assertEqual("Any field", row.field_combo.currentText())
+                self.assertEqual("does not contain", row.mode_combo.currentText())
+                for combo in (row.field_combo, row.mode_combo):
+                    self.assertGreaterEqual(
+                        combo.width(), required_combo_text_width(combo)
+                    )
+                for control in (row.field_combo, row.mode_combo, row.text_edit):
+                    right_edge = control.mapTo(row, control.rect().bottomRight()).x()
+                    self.assertLessEqual(right_edge, row.contentsRect().right())
+
+    def test_header_partial_mark_is_visible_in_light_and_dark(self) -> None:
+        from paper_spider.ui.theme import appearance_from_values, build_stylesheet
+
+        for theme in ("Light", "Dark"):
+            with self.subTest(theme=theme):
+                header = SelectHeaderView(Qt.Orientation.Horizontal)
+                header.setStyleSheet(
+                    build_stylesheet(appearance_from_values(theme, "Blue"))
+                )
+                color = header.partial_mark_color()
+                self.assertEqual(
+                    header.palette().color(QPalette.ColorRole.Highlight), color
+                )
+                image = QImage(20, 20, QImage.Format.Format_ARGB32)
+                image.fill(Qt.GlobalColor.transparent)
+                painter = QPainter(image)
+                SelectHeaderView.draw_partial_mark(
+                    painter, QRect(3, 3, 14, 14), color
+                )
+                painter.end()
+
+                center_y = QRect(3, 3, 14, 14).center().y()
+                colored = [
+                    x
+                    for x in range(image.width())
+                    if image.pixelColor(x, center_y).alpha() > 0
+                ]
+                self.assertGreaterEqual(len(colored), 6)
 
     def test_filter_row_roles_use_plain_language_with_legacy_config_values(self) -> None:
         row = FilterRow()

@@ -139,17 +139,6 @@ def build_stylesheet(appearance: Appearance) -> str:
     QTableView::item {{
         background: transparent;
     }}
-    QCheckBox::indicator, QTableView::indicator {{
-        width: 14px;
-        height: 14px;
-        border: 1px solid {appearance.border};
-        border-radius: 3px;
-        background: {appearance.surface};
-    }}
-    QCheckBox::indicator:checked, QTableView::indicator:checked {{
-        background: {appearance.accent_color};
-        border-color: {appearance.accent_color};
-    }}
     QGroupBox {{
         margin-top: 12px;
         padding: 14px 10px 10px 10px;
@@ -414,33 +403,6 @@ def build_stylesheet(appearance: Appearance) -> str:
     QWidget#selectionControls QPushButton {{
         background: {secondary_bg};
         border: 1px solid {appearance.border};
-    }}
-    QFrame#settingsSidebar {{
-        background: {appearance.surface};
-        border: 0;
-        border-right: 1px solid {appearance.border};
-        border-radius: 0;
-    }}
-    QPushButton#settingsNavButton {{
-        background: transparent;
-        color: {appearance.text};
-        border: 0;
-        border-left: 3px solid transparent;
-        border-radius: 0;
-        padding: 10px 14px;
-        text-align: left;
-        font-size: 14px;
-        font-weight: 500;
-    }}
-    QPushButton#settingsNavButton:hover {{
-        background: {hover_bg};
-        border-left-color: {appearance.border};
-    }}
-    QPushButton#settingsNavButton[active="true"] {{
-        background: {selection_bg};
-        color: {appearance.accent_color};
-        border-left-color: {appearance.accent_color};
-        font-weight: 700;
     }}
     QFrame#settingsContentArea {{
         background: {appearance.background};
