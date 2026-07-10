@@ -1,7 +1,7 @@
 [project]
 name = "paperspider"
 version = "0.1.0"
-description = "Minimal UI tool to fetch NeurIPS papers"
+description = "Desktop tool to filter, download, and export conference papers"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }

@@ -1,55 +1,52 @@
-# PaperSpider（MVP）
+<h1 align="center">PaperSpider</h1>
 
-[English README](README.md) | [中文 文档](docs/zh.md) | [Documentation](docs/en.md)
+<p align="center">
+  <img src="docs/images/app-icon.png" width="128" alt="PaperSpider 应用图标">
+</p>
 
-**最新动态**
-- 2026-07-09：新增 AAAI、ICCV、IJCAI、FAST、USENIX Security、NDSS、VLDB 等 CCF A 会议适配器，并补充剩余 CCF A 会议路线文档。
-- 2026-03-12：基于 SIGCOMM 官方 proceedings 页面与 DOI/Crossref 元数据，新增 SIGCOMM 会议适配器。
-- 2026-03-12：基于官方 CVF Open Access 仓库，新增 CVPR 会议适配器。
-- 2026-03-12：基于 ACL Anthology 与 USENIX 通用实现，新增 ACL、NAACL、OSDI、ATC 会议适配器。
-- 2026-03-11：新增 EMNLP 与 NSDI 会议适配器，并补充单元测试。
-- 2026-02-28：新增选中文章导出弹窗（CSV/JSON/纯文本列表），支持字段选择与一键复制。
-- 2026-02-28：新增 ICML 与 ICLR 会议适配器，并补充单元测试。
-- 2026-01-10：增加工作台优先流程、多条件筛选（Must/Should/Must not）、可取消下载、PDF/Bib 快捷操作与访问间隔设置。
+[English README](README.md) · [中文使用说明](docs/zh.md) · [English guide](docs/en.md)
 
-一个基于 PyQt 的最小可用工具，用于获取会议论文列表、下载摘要/PDF，并用 SQLite 管理。
+PaperSpider 是一个会议论文桌面工具，用来获取论文列表、快速缩小范围，并批量下载或导出需要的论文信息。
 
-## 功能
+![包含论文数据的 PaperSpider 主界面](docs/images/workspace.png)
 
-- 会议适配器：NeurIPS、ICML、ICLR、AAAI、IJCAI、CVPR、ICCV、EMNLP、ACL、NAACL、SIGCOMM、NSDI、OSDI、ATC、FAST、USENIX Security、NDSS、VLDB
-- 工作台优先 UI：从空状态或顶部数据集名称选择/管理数据集，再获取论文列表
-- 筛选条件：Must/Should/Must not + 最小 Should 命中数，并支持在当前论文列表内快速搜索
-- 论文表格专注显示元数据，Abstract/PDF/Bib 操作从表格列移出
-- 详情面板可查看完整摘要，并执行摘要复制/下载、PDF 下载/打开、Bib 复制与定位操作
-- 选中论文导出（CSV/JSON/纯文本列表），支持字段选择与一键复制
-- 状态/日志区域显示进度，并支持取消摘要/PDF 下载
-- 访问间隔设置（礼貌爬取）
-- 数据按 `会议/年份` 组织：SQLite + `pdf/` + `bib/`
+## 主要用途
 
-## 运行
+- 获取 AI、系统、安全、视觉和 NLP 领域主要会议的论文列表。
+- 组合可复用的筛选规则，并用快速搜索进一步缩小结果。
+- 下载单篇或批量下载论文摘要和 PDF。
+- 将选中论文的元数据与摘要导出为 CSV、JSON 或纯文本列表。
+- 按会议和年份将数据保存在本地 SQLite，并管理下载文件。
+
+## 启动
+
+可以从 [GitHub Releases](https://github.com/isaacveg/PaperSpider/releases/latest)
+直接下载最新的 **macOS** 或 **Windows** 版本。
+
+如需从源码运行，安装 [uv](https://docs.astral.sh/uv/) 后执行：
 
 ```bash
 uv run paperspider
 ```
 
-也可以直接运行模块：
+## 基本流程
 
-```bash
-uv run -m paper_spider
-```
+1. 在 **Datasets** 中选择会议和年份，然后获取或打开论文列表。
+2. 添加 **Include**、**Prefer** 或 **Exclude** 条件，点击 **Apply**。
+3. 使用 **Search papers** 在筛选结果中继续搜索。
+4. 勾选论文后批量下载摘要或 PDF；选中单行可使用右侧的单篇操作。
+5. 点击 **Export selected**，导出标题、作者、摘要或简单标题列表。
+
+筛选规则含义和完整操作见[中文使用说明](docs/zh.md)。
+
+## 支持的会议
+
+NeurIPS、ICML、ICLR、AAAI、IJCAI、CVPR、ICCV、EMNLP、ACL、NAACL、SIGCOMM、NSDI、OSDI、ATC、FAST、USENIX Security、NDSS 和 VLDB。
 
 ## 测试
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -v
+uv run python -m unittest discover -s tests -v
 ```
 
-## 说明
-
-- 从工作台空状态或顶部数据集名称选择/创建数据集；基础目录在 Datasets 中设置，Settings 只用于设置访问间隔。
-- 数据会存放在 `会议/年份/` 目录下。
-- 摘要存 SQLite；bibtex 同时存 SQLite 并导出到文件。
-
-## 许可证
-
-Apache-2.0，详见 `LICENSE` 与 `NOTICE`。
+本项目采用 Apache-2.0 许可证，详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。

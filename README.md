@@ -1,55 +1,52 @@
-# PaperSpider (MVP)
+<h1 align="center">PaperSpider</h1>
 
-[中文 README](README.zh.md) | [Documentation](docs/en.md) | [中文 文档](docs/zh.md)
+<p align="center">
+  <img src="docs/images/app-icon.png" width="128" alt="PaperSpider icon">
+</p>
 
-**News**
-- 2026-07-09: Added CCF A adapters for AAAI, ICCV, IJCAI, FAST, USENIX Security, NDSS, and VLDB; documented the remaining CCF A conference roadmap.
-- 2026-03-12: Added a SIGCOMM adapter based on the official proceedings page plus DOI/Crossref metadata.
-- 2026-03-12: Added CVPR adapter based on the official CVF Open Access repository.
-- 2026-03-12: Added ACL, NAACL, OSDI, and ATC adapters by reusing ACL Anthology and USENIX base implementations.
-- 2026-03-11: Added EMNLP and NSDI conference adapters with unit tests.
-- 2026-02-28: Added selected-paper export dialog (CSV/JSON/plain list) with copy-ready output.
-- 2026-02-28: Added ICML and ICLR conference adapters with unit tests.
-- 2026-01-10: Added workspace-first flow, multi-filter (Must/Should/Must not), cancelable downloads, PDF/bib quick actions, and request interval setting.
+[中文 README](README.zh.md) · [English guide](docs/en.md) · [中文使用说明](docs/zh.md)
 
-A minimal PyQt app to fetch conference paper lists, download abstracts/PDFs, and manage them in SQLite.
+PaperSpider is a desktop app for finding conference papers, narrowing a large paper list, and downloading or exporting the results you need.
 
-## Features
+![PaperSpider workspace with papers](docs/images/workspace.png)
 
-- Conference adapters: NeurIPS, ICML, ICLR, AAAI, IJCAI, CVPR, ICCV, EMNLP, ACL, NAACL, SIGCOMM, NSDI, OSDI, ATC, FAST, USENIX Security, NDSS, VLDB
-- Workspace-first UI: choose/manage datasets from the empty state or top dataset name, then fetch the paper list
-- Filters: Must/Should/Must not + min-should-match, plus quick search within the current paper list
-- Paper table focused on metadata, with artifact actions moved out of the columns
-- Details panel for full abstract preview, copy/download abstract, download/open PDF, and Bib copy/reveal actions
-- Export selected papers to CSV/JSON/plain text list with field selection and quick copy
-- Status/log area for progress messages and cancelable abstract/PDF downloads
-- Request interval (polite crawling)
-- Output structure per `conference/year`, with SQLite + `pdf/` + `bib/`
+## What it does
 
-## Run
+- Fetches paper lists from major AI, systems, security, vision, and NLP conferences.
+- Combines reusable filter rules with a quick search for further narrowing.
+- Downloads abstracts and PDFs for one paper or many selected papers.
+- Exports selected paper metadata and abstracts as CSV, JSON, or a plain list.
+- Stores each conference and year locally in SQLite, alongside downloaded files.
+
+## Start
+
+Download the latest package for **macOS** or **Windows** from
+[GitHub Releases](https://github.com/isaacveg/PaperSpider/releases/latest).
+
+To run from source, install [uv](https://docs.astral.sh/uv/), then run:
 
 ```bash
 uv run paperspider
 ```
 
-If you prefer running the module directly:
+## Basic workflow
 
-```bash
-uv run -m paper_spider
-```
+1. Choose a conference and year from **Datasets**, then fetch or open its paper list.
+2. Add **Include**, **Prefer**, or **Exclude** filter rules and click **Apply**.
+3. Use **Search papers** to narrow the filtered results further.
+4. Select papers, then download abstracts or PDFs in a batch. Select one row to use its individual actions.
+5. Click **Export selected** to export titles, authors, abstracts, or a simple title list.
+
+See the [English guide](docs/en.md) for filter meanings and the complete workflow.
+
+## Supported conferences
+
+NeurIPS, ICML, ICLR, AAAI, IJCAI, CVPR, ICCV, EMNLP, ACL, NAACL, SIGCOMM, NSDI, OSDI, ATC, FAST, USENIX Security, NDSS, and VLDB.
 
 ## Test
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -v
+uv run python -m unittest discover -s tests -v
 ```
 
-## Notes
-
-- Pick or create a dataset from the workspace empty state or top dataset name; set the base folder in Datasets and use Settings only for request interval.
-- Data is stored under `CONFERENCE/YEAR/`.
-- Abstracts are stored in SQLite; bibtex is stored in SQLite and exported to files.
-
-## License
-
-Apache-2.0. See `LICENSE` and `NOTICE`.
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

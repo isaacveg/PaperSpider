@@ -1,123 +1,67 @@
-# PaperSpider 文档
+# PaperSpider 使用说明
 
-## 上手
+[项目首页](../README.zh.md) · [English guide](en.md)
 
-### 安装
+PaperSpider 用来把完整的会议论文列表逐步缩小为需要关注的论文集合，并完成查看、下载和导出。
 
-1) 安装 Python 3.10+ 和 `uv`。
-2) 克隆仓库。
-3) 运行应用：
+## 启动应用
+
+安装 Python 3.10+ 和 [uv](https://docs.astral.sh/uv/)，克隆仓库后运行：
 
 ```bash
 uv run paperspider
 ```
 
-### 选择会议与数据集
+## 1. 选择会议
 
-1) 从空状态或顶部数据集名称选择数据集开始。
-2) 在顶部区域查看当前会议/年份。
-3) 在独立的数据集窗口中设置基础目录、选择已有数据集，或选择会议/年份创建新数据集，然后加载到工作台。
-4) 如需调整访问间隔，再从顶部区域打开 **Settings**。
+1. 点击顶部的数据集按钮，打开 **Datasets**。
+2. 选择 PaperSpider 保存数据的基础目录。
+3. 选择已有的会议和年份，点击 **Use selected**。
+4. 如需新增数据集，点击 **Add Dataset**，选择会议和年份，再点击 **Fetch dataset**。
 
-### 获取与同步论文列表
+论文列表会保存在本地，下次可以直接打开。需要同步最新列表时，点击该数据集的 **Refresh**。
 
-- 点击 **Fetch list** 获取或刷新所选会议/年份的论文列表。
-- 论文列表保存在 SQLite 中，可随时重新打开。
-- 当前支持会议：NeurIPS、ICML、ICLR、AAAI、IJCAI、CVPR、ICCV、EMNLP、ACL、NAACL、SIGCOMM、NSDI、OSDI、ATC、FAST、USENIX Security、NDSS、VLDB。
+## 2. 使用 Filter
 
-### 添加筛选条件
+点击 **Add rule**，依次选择规则角色、字段、匹配方式和关键词：
 
-1) 打开筛选区域。
-2) 在 **Must**、**Should** 或 **Must not** 分组下添加规则。
-3) 选择范围（All/Title/Authors/Abstract/Keywords）。
-4) 选择匹配方式（contains / not contains）。
-5) 输入规则文本。
-6) 设置 **Min should match** 以要求至少命中 N 个 Should 条件。
-7) 应用筛选条件。
-8) 使用表格上方的快速搜索，在当前筛选结果内继续按关键词缩小列表，不改变已保存的筛选规则。
+- **Include**：论文必须符合该条件。
+- **Prefer**：默认是偏好条件；设置 **Minimum preferred** 后，至少要符合指定数量的 Prefer 条件。
+- **Exclude**：符合该条件的论文会被排除。
 
-筛选角色含义：
+筛选范围可以是任意字段，也可以只检查标题、作者、摘要或关键词。不需要某条规则时，可以先取消其复选框而不必删除。设置完成后点击 **Apply**。
 
-- **Must**：所有启用的 Must 规则都必须命中。
-- **Should**：默认是可选条件；当 **Min should match** 大于 0 时，要求至少命中指定数量。
-- **Must not**：命中的论文会被排除。
+## 3. 进一步筛选
 
-### 选择、查看与下载
+在工作台上方的 **Search papers** 中输入关键词。它只搜索当前筛选结果，不会改动 Filter 规则；清空搜索框即可回到完整的筛选结果。
 
-- 使用勾选列选择论文，或用表格下方动作栏里的 **Select all / none / invert**。
-- 使用论文表格完成选择和元数据浏览。Abstract/PDF/Bib 操作不再嵌入表格列。
-- 使用详情面板查看当前论文：
-  - 阅读完整摘要。
-  - 复制已有摘要，或下载缺失摘要。
-  - 下载缺失 PDF，或打开/定位已有 PDF 文件。
-  - 获取/导出、复制或定位 BibTeX 文件。
-- 使用状态/日志区域查看获取与下载进度。
-- 摘要或 PDF 下载运行时，可在状态/日志区域使用取消控件。
+## 4. 查看与下载
 
-### 导出选中论文
+点击论文行后，右侧会显示标题、作者、分类、摘要和已有文件。
 
-- 选择一篇或多篇论文后，点击 **Export selected**。
-- 格式支持 CSV、JSON、纯文本列表。
-- CSV/JSON 可选择导出字段（title/authors/abstract）。
-- 纯文本列表按一行一个标题导出。
-- 生成内容显示在文本框中，可全选复制，并提供 **Copy** 按钮。
+- 在右侧详情区复制或下载单篇摘要、打开单篇 PDF，或复制 BibTeX。
+- 勾选多篇论文后，使用 **Download abstracts** 或 **Download PDFs** 批量下载。
+- 使用表头复选框全选或清空当前可见论文，使用 **Invert** 反选。
+- 展开 **Show log** 查看进度；批量任务运行时也可以在这里取消。
 
-### 数据结构
+## 5. 导出结果
 
-所有数据存放在：
+勾选需要的论文，点击 **Export selected**：
 
-```
-<base folder>/<conference>/<year>/
+- 选择 **CSV** 或 **JSON**，可导出标题、作者和摘要。
+- 选择 **Plain list**，按每行一个标题导出简单列表。
+
+需要选中论文的 BibTeX 文件时，使用 **Export Bib**。
+
+## 本地数据
+
+PaperSpider 按以下结构保存数据：
+
+```text
+<基础目录>/<会议>/<年份>/
   papers.sqlite
   pdf/
   bib/
 ```
 
-## 开发
-
-### 环境要求
-
-- Python 3.10+
-- `uv`
-
-### 开发设置
-
-1) Fork 或克隆仓库。
-2) 安装依赖：
-
-```bash
-uv sync
-```
-
-3) 运行应用：
-
-```bash
-uv run paperspider
-```
-
-4) 运行测试：
-
-```bash
-.venv/bin/python -m unittest discover -s tests -v
-```
-
-### 打包为可双击启动的应用
-
-macOS：
-
-```bash
-uv run --with pyinstaller pyinstaller --noconfirm --clean --windowed --name PaperSpider paper_spider/__main__.py
-```
-
-Windows：
-
-```bash
-uv run --with pyinstaller pyinstaller --noconfirm --clean --windowed --name PaperSpider paper_spider/__main__.py
-```
-
-### 说明
-
-- UI 使用 PyQt6 构建。
-- 会议适配器位于 `paper_spider/conferences/`。
-- 存储与数据库结构在 `paper_spider/storage.py`。
-- CCF A 会议实现调研位于 `docs/ccf_a_conference_research.md`。
+在 **Settings** 中可以调整请求间隔和界面外观。批量下载时建议保留适当的请求间隔。
