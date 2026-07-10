@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -22,6 +23,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .workspace_view_helpers import WorkspaceSummary
+from .window_chrome import WindowControls, is_macos
 
 
 def _panel_frame() -> QFrame:
@@ -34,8 +36,15 @@ class TopBar(QWidget):
     settings_clicked = pyqtSignal()
     dataset_clicked = pyqtSignal()
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        parent: Optional[QWidget] = None,
+        include_window_controls: bool = False,
+        summary_widget: Optional[QWidget] = None,
+    ) -> None:
         super().__init__(parent)
+        self.window_controls: Optional[WindowControls] = None
+        self._drag_offset = None
         layout = QHBoxLayout()
         layout.setContentsMargins(8, 6, 8, 6)
 
@@ -51,15 +60,44 @@ class TopBar(QWidget):
         self.settings_btn.setObjectName("secondaryButton")
         self.settings_btn.clicked.connect(self.settings_clicked.emit)
 
+        if include_window_controls and is_macos():
+            self.window_controls = WindowControls(self.window(), self)
+            layout.addWidget(self.window_controls)
+            layout.addSpacing(10)
         layout.addWidget(self.app_label)
         layout.addSpacing(16)
         layout.addWidget(self.dataset_btn)
+        if summary_widget is not None:
+            layout.addStretch(1)
+            layout.addWidget(summary_widget)
         layout.addStretch()
         layout.addWidget(self.settings_btn)
+        if include_window_controls and not is_macos():
+            self.window_controls = WindowControls(self.window(), self)
+            layout.addSpacing(8)
+            layout.addWidget(self.window_controls)
         self.setLayout(layout)
 
     def set_dataset(self, text: str) -> None:
         self.dataset_btn.setText(f"{text} \u25be")
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = event.globalPosition().toPoint() - self.window().frameGeometry().topLeft()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.window().move(event.globalPosition().toPoint() - self._drag_offset)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        self._drag_offset = None
+        super().mouseReleaseEvent(event)
 
 
 class SummaryStrip(QWidget):
@@ -67,16 +105,39 @@ class SummaryStrip(QWidget):
         super().__init__(parent)
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        self.summary_label = QLabel("Total 0 · Abstracts 0/0 · PDFs 0/0 · Bib 0/0")
-        self.summary_label.setObjectName("summaryCard")
-        self.selection_label = QLabel("Selected 0/0")
-        self.selection_label.setObjectName("summaryCard")
+        card = QFrame()
+        card.setObjectName("summaryStatsCard")
+        card_layout = QHBoxLayout()
+        card_layout.setContentsMargins(14, 6, 14, 6)
+        card_layout.setSpacing(18)
 
-        layout.addWidget(self.summary_label)
-        layout.addStretch()
-        layout.addWidget(self.selection_label)
+        self.total_value = self._stat(card_layout, "Total")
+        self.filtered_value = self._stat(card_layout, "Filtered")
+        self.abstracts_value = self._stat(card_layout, "Abstracts")
+        self.pdfs_value = self._stat(card_layout, "PDFs")
+        self.bib_value = self._stat(card_layout, "Bib")
+        card.setLayout(card_layout)
+
+        layout.addWidget(card)
         self.setLayout(layout)
+
+    def _stat(self, layout: QHBoxLayout, label: str) -> QLabel:
+        container = QWidget()
+        container.setObjectName("summaryStat")
+        stat_layout = QVBoxLayout()
+        stat_layout.setContentsMargins(0, 0, 0, 0)
+        stat_layout.setSpacing(1)
+        label_widget = QLabel(label)
+        label_widget.setObjectName("summaryStatLabel")
+        value_widget = QLabel("0")
+        value_widget.setObjectName("summaryStatValue")
+        stat_layout.addWidget(label_widget)
+        stat_layout.addWidget(value_widget)
+        container.setLayout(stat_layout)
+        layout.addWidget(container)
+        return value_widget
 
     def set_summary(
         self,
@@ -85,20 +146,15 @@ class SummaryStrip(QWidget):
         filtered_count: Optional[int] = None,
         visible_count: Optional[int] = None,
     ) -> None:
-        parts = [f"Total {summary.total}"]
-        if filtered_count is not None and filtered_count != summary.total:
-            parts.append(f"Filtered {filtered_count}/{summary.total}")
-        if visible_count is not None and filtered_count is not None and visible_count != filtered_count:
-            parts.append(f"Showing {visible_count}/{filtered_count}")
-        parts.extend(
-            [
-                f"Abstracts {summary.abstracts}/{summary.total}",
-                f"PDFs {summary.pdfs}/{summary.total}",
-                f"Bib {summary.bibs}/{summary.total}",
-            ]
-        )
-        self.summary_label.setText(" · ".join(parts))
-        self.selection_label.setText(f"Selected {selected_count}/{summary.total}")
+        del selected_count
+        filtered_value = visible_count if visible_count is not None else filtered_count
+        if filtered_value is None:
+            filtered_value = summary.total
+        self.total_value.setText(f"{summary.total:,}")
+        self.filtered_value.setText(f"{filtered_value:,}")
+        self.abstracts_value.setText(f"{summary.abstracts:,}")
+        self.pdfs_value.setText(f"{summary.pdfs:,}")
+        self.bib_value.setText(f"{summary.bibs:,}")
 
 
 class EmptyStateWidget(QWidget):

@@ -14,6 +14,7 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 
 from ..models import PaperMeta
+from .author_utils import split_author_names
 from .request_base import RequestsConferenceBase
 
 
@@ -137,7 +138,7 @@ class IcmlConference(RequestsConferenceBase):
         if node is None:
             return []
         text = node.get_text(" ", strip=True)
-        return [part.strip() for part in text.split(",") if part.strip()]
+        return split_author_names(text)
 
     def _extract_authors(self, soup: BeautifulSoup) -> List[str]:
         heading = soup.find("h1")
@@ -152,7 +153,7 @@ class IcmlConference(RequestsConferenceBase):
             if "Proceedings of" in text:
                 break
             if text and "Abstract" not in text:
-                return [part.strip() for part in text.split(",") if part.strip()]
+                return split_author_names(text)
             node = node.find_next_sibling()
         return []
 

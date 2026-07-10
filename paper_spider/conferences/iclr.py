@@ -81,10 +81,15 @@ class IclrConference(RequestsConferenceBase):
         if not paper.pdf_url:
             raise RuntimeError("PDF URL not found")
 
-        resp = self._get(paper.pdf_url, binary=True)
-        if resp is None:
-            raise RuntimeError("Failed to download PDF")
-        return resp.content
+        for url in self._pdf_url_candidates(paper.pdf_url, forum_id):
+            resp = self._get(url, binary=True)
+            if resp is None:
+                continue
+            if b"%PDF" not in resp.content[:1024]:
+                continue
+            paper.pdf_url = url
+            return resp.content
+        raise RuntimeError("PDF URL not found")
 
     def fetch_bibtex(self, paper: PaperMeta) -> str:
         if paper.bibtex:
@@ -268,7 +273,30 @@ class IclrConference(RequestsConferenceBase):
             return value
         if value.startswith("/"):
             return urljoin(self.web_base, value)
+        if value.startswith("pdf?") or value.startswith("attachment?"):
+            return urljoin(f"{self.web_base}/", value)
         return f"{self.web_base}/pdf?id={forum_id}"
+
+    def _pdf_url_candidates(self, pdf_url: Optional[str], forum_id: Optional[str]) -> List[str]:
+        candidates: List[str] = []
+        if pdf_url:
+            candidates.append(pdf_url)
+        if forum_id:
+            candidates.extend(
+                [
+                    f"{self.web_base}/pdf?id={forum_id}",
+                    f"{self.web_base}/attachment?id={forum_id}&name=pdf",
+                    *(f"{api_base}/pdf?id={forum_id}" for api_base in self.api_bases),
+                    *(f"{api_base}/attachment?id={forum_id}&name=pdf" for api_base in self.api_bases),
+                ]
+            )
+        deduped: List[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                deduped.append(candidate)
+        return deduped
 
     def _content_value(self, content: Dict[str, Any], key: str) -> Optional[str]:
         raw = content.get(key)
@@ -296,7 +324,14 @@ class IclrConference(RequestsConferenceBase):
         if isinstance(raw, dict):
             raw = raw.get("value")
         if isinstance(raw, list):
-            return [str(item).strip() for item in raw if str(item).strip()]
+            values: List[str] = []
+            for item in raw:
+                if isinstance(item, dict):
+                    item = item.get("value") or item.get("name") or item.get("fullname")
+                text = str(item).strip() if item is not None else ""
+                if text:
+                    values.append(text)
+            return values
         if isinstance(raw, str):
             parts = [part.strip() for part in raw.replace(";", ",").split(",")]
             return [part for part in parts if part]

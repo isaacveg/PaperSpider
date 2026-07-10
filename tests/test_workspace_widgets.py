@@ -25,11 +25,18 @@ class WorkspaceWidgetsTests(unittest.TestCase):
 
     def test_summary_strip_renders_counts_and_selection(self) -> None:
         widget = SummaryStrip()
-        widget.set_summary(WorkspaceSummary(total=10, abstracts=3, pdfs=2, bibs=1), 4)
+        widget.set_summary(
+            WorkspaceSummary(total=10, abstracts=3, pdfs=2, bibs=1),
+            4,
+            filtered_count=8,
+            visible_count=6,
+        )
 
-        self.assertIn("Total 10", widget.summary_label.text())
-        self.assertIn("Abstracts 3/10", widget.summary_label.text())
-        self.assertIn("Selected 4/10", widget.selection_label.text())
+        self.assertEqual("10", widget.total_value.text())
+        self.assertEqual("6", widget.filtered_value.text())
+        self.assertEqual("3", widget.abstracts_value.text())
+        self.assertEqual("2", widget.pdfs_value.text())
+        self.assertEqual("1", widget.bib_value.text())
 
     def test_details_panel_handles_empty_and_populated_rows(self) -> None:
         widget = DetailsPanel()

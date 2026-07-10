@@ -13,6 +13,7 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 
 from ..models import PaperCategory, PaperMeta
+from .author_utils import split_author_names
 from .request_base import RequestsConferenceBase
 
 
@@ -192,9 +193,7 @@ class IjcaiConference(RequestsConferenceBase):
         return self._extract_numeric_paper_id(paper.detail_url, None)
 
     def _split_authors(self, text: Optional[str]) -> List[str]:
-        if not text:
-            return []
-        return [part.strip() for part in text.split(",") if part.strip()]
+        return split_author_names(text or "")
 
     def _node_text(self, node) -> Optional[str]:
         if node is None:

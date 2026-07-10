@@ -78,7 +78,8 @@ class SettingsDialogTests(unittest.TestCase):
         self.assertIn("Appearance", section_titles)
         self.assertFalse(hasattr(dialog, "base_dir_edit"))
         self.assertFalse(hasattr(dialog, "existing_list"))
-        self.assertTrue(dialog.windowFlags() & Qt.WindowType.NoTitleBarBackgroundHint)
+        self.assertTrue(dialog.windowFlags() & Qt.WindowType.FramelessWindowHint)
+        self.assertIsNotNone(dialog.title_bar)
 
     def test_settings_exposes_appearance_theme_and_accent_color(self) -> None:
         SharedFakeSettings.values = {
@@ -127,8 +128,8 @@ class SettingsDialogTests(unittest.TestCase):
         self.assertEqual("secondaryButton", dialog.cancel_btn.objectName())
         self.assertEqual("primaryButton", dialog.save_btn.objectName())
         self.assertEqual("Save / Close", dialog.save_btn.text())
-        self.assertEqual("ms", dialog.delay_unit_combo.currentText())
-        self.assertGreaterEqual(dialog.delay_unit_combo.minimumWidth(), 96)
+        self.assertEqual("ms", dialog.delay_unit_label.text())
+        self.assertFalse(hasattr(dialog, "delay_unit_combo"))
         self.assertEqual("settingsSidebar", dialog.sidebar.objectName())
         self.assertGreaterEqual(len(dialog.findChildren(QWidget, "settingsFieldRow")), 3)
 
@@ -154,7 +155,8 @@ class DatasetDialogTests(unittest.TestCase):
         ]
         self.assertEqual(["", "Conference", "Year", "Status", "Papers", "Actions"], headers)
         self.assertEqual("Search datasets...", dialog.search_edit.placeholderText())
-        self.assertTrue(dialog.windowFlags() & Qt.WindowType.NoTitleBarBackgroundHint)
+        self.assertTrue(dialog.windowFlags() & Qt.WindowType.FramelessWindowHint)
+        self.assertIsNotNone(dialog.title_bar)
 
     def test_existing_dataset_row_is_table_row_with_inline_actions(self) -> None:
         with patch("paper_spider.ui.dataset_dialog.QSettings", FakeSettings):

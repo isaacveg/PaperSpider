@@ -14,6 +14,7 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 
 from ..models import PaperCategory, PaperMeta
+from .author_utils import split_author_names
 from .request_base import RequestsConferenceBase
 
 
@@ -84,6 +85,7 @@ class AaaiConference(RequestsConferenceBase):
         if not paper.pdf_url:
             raise RuntimeError("PDF URL not found")
 
+        paper.pdf_url = self._normalize_pdf_url(paper.pdf_url)
         resp = self._get(paper.pdf_url, binary=True)
         if resp is None:
             raise RuntimeError("Failed to download PDF")
@@ -236,9 +238,7 @@ class AaaiConference(RequestsConferenceBase):
         return node.get_text(" ", strip=True)
 
     def _split_authors(self, text: str) -> List[str]:
-        if not text:
-            return []
-        return [part.strip() for part in text.split(",") if part.strip()]
+        return split_author_names(text)
 
     def _paper_id_from_url(self, url: str, title: str) -> str:
         match = re.search(r"/article/view/(\d+)", url)
@@ -257,8 +257,11 @@ class AaaiConference(RequestsConferenceBase):
             text = anchor.get_text(" ", strip=True).lower()
             classes = {str(class_name).lower() for class_name in anchor.get("class", [])}
             if text == "pdf" or "pdf" in classes:
-                return urljoin(base_url, href)
+                return self._normalize_pdf_url(urljoin(base_url, href))
         return None
+
+    def _normalize_pdf_url(self, url: str) -> str:
+        return re.sub(r"/article/view/(\d+)/(\d+)", r"/article/download/\1/\2", url)
 
     def _find_bibtex_url(self, soup: BeautifulSoup, base_url: str) -> Optional[str]:
         for anchor in soup.select("a[href]"):

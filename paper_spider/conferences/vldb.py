@@ -16,6 +16,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from ..models import PaperCategory, PaperMeta
+from .author_utils import split_author_names
 from .request_base import RequestsConferenceBase
 
 
@@ -199,10 +200,7 @@ class VldbConference(RequestsConferenceBase):
         return source_id.replace("/", "_")
 
     def _split_authors(self, text: Optional[str]) -> List[str]:
-        if not text:
-            return []
-        separator = "," if "," in text else " and "
-        return [part.strip() for part in text.split(separator) if part.strip()]
+        return split_author_names(text or "")
 
     def _clean_text(self, value: Any) -> Optional[str]:
         if value is None:

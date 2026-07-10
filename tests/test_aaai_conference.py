@@ -13,9 +13,9 @@ from paper_spider.models import PaperMeta
 
 
 class _FakeResponse:
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str = "", content: bytes = b"") -> None:
         self.text = text
-        self.content = text.encode("utf-8")
+        self.content = content or text.encode("utf-8")
         self.status_code = 200
         self.encoding = "utf-8"
 
@@ -201,7 +201,7 @@ class AaaiConferenceTests(unittest.TestCase):
         self.assertEqual("AAAI Technical Track on Application Domains I", papers[0].track)
         self.assertEqual("conference", papers[0].paper_type)
         self.assertEqual("https://ojs.aaai.org/index.php/AAAI/article/view/36958", papers[0].detail_url)
-        self.assertEqual("https://ojs.aaai.org/index.php/AAAI/article/view/36958/40920", papers[0].pdf_url)
+        self.assertEqual("https://ojs.aaai.org/index.php/AAAI/article/download/36958/40920", papers[0].pdf_url)
 
     def test_list_papers_follows_archive_pagination_to_requested_year(self) -> None:
         conf = _conference_class()()
@@ -284,6 +284,31 @@ class AaaiConferenceTests(unittest.TestCase):
             bibtex = conf.fetch_bibtex(paper)
 
         self.assertEqual("@article{ai2026resource}", bibtex)
+
+    def test_fetch_pdf_uses_ojs_download_url_instead_of_view_page(self) -> None:
+        conf = _conference_class()()
+        paper = PaperMeta(
+            paper_id="36958",
+            title="Resource Efficient Sleep Staging via Multi-Level Masking and Prompt Learning",
+            conf="aaai",
+            year=2026,
+            detail_url="https://ojs.aaai.org/index.php/AAAI/article/view/36958",
+            pdf_url="https://ojs.aaai.org/index.php/AAAI/article/view/36958/40920",
+        )
+        seen_urls: list[str] = []
+
+        def fake_get(url: str, binary: bool = False):
+            seen_urls.append(url)
+            return _FakeResponse(content=b"%PDF-1.7")
+
+        with patch.object(conf, "_get", side_effect=fake_get):
+            data = conf.fetch_pdf(paper)
+
+        self.assertEqual(b"%PDF-1.7", data)
+        self.assertEqual(
+            ["https://ojs.aaai.org/index.php/AAAI/article/download/36958/40920"],
+            seen_urls,
+        )
 
 
 if __name__ == "__main__":

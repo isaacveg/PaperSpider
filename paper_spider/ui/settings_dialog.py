@@ -18,12 +18,13 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSpinBox,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
 
 from .theme import ACCENTS, THEMES, appearance_from_values, build_stylesheet
-from .window_chrome import apply_window_chrome
+from .window_chrome import FramelessTitleBar, apply_window_chrome
 
 
 class SettingsDialog(QDialog):
@@ -41,6 +42,8 @@ class SettingsDialog(QDialog):
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
+        self.title_bar = FramelessTitleBar(self, "PaperSpider - Settings", self)
+        root_layout.addWidget(self.title_bar)
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -67,9 +70,9 @@ class SettingsDialog(QDialog):
         self.delay_spin.setRange(0, 10000)
         self.delay_spin.setValue(100)
         self.delay_spin.setFixedWidth(120)
-        self.delay_unit_combo = QComboBox()
-        self.delay_unit_combo.addItem("ms")
-        self.delay_unit_combo.setMinimumWidth(96)
+        self.delay_unit_label = QLabel("ms")
+        self.delay_unit_label.setObjectName("settingsUnitLabel")
+        self.delay_unit_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         request_card = self._settings_card(
             "Request Interval",
             self._field_group(
@@ -77,11 +80,11 @@ class SettingsDialog(QDialog):
                     self._setting_row(
                         "Delay Between Requests",
                         "Time to wait between consecutive requests to the server.",
-                        self._inline_controls(self.delay_spin, self.delay_unit_combo),
+                        self._inline_controls(self.delay_spin, self.delay_unit_label),
                     )
                 ]
             ),
-            "◷",
+            QStyle.StandardPixmap.SP_BrowserReload,
         )
         self.content_cards_layout.addWidget(request_card)
 
@@ -107,7 +110,7 @@ class SettingsDialog(QDialog):
                     ),
                 ]
             ),
-            "◉",
+            QStyle.StandardPixmap.SP_DesktopIcon,
         )
         self.content_cards_layout.addWidget(appearance_card)
         self.content_cards_layout.addStretch()
@@ -150,7 +153,7 @@ class SettingsDialog(QDialog):
         button.setProperty("active", "true" if active else "false")
         return button
 
-    def _settings_card(self, title: str, body: QWidget, icon_text: str) -> QFrame:
+    def _settings_card(self, title: str, body: QWidget, icon: QStyle.StandardPixmap) -> QFrame:
         card = QFrame()
         card.setObjectName("settingsContentCard")
         layout = QVBoxLayout()
@@ -159,12 +162,14 @@ class SettingsDialog(QDialog):
 
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
-        icon = QLabel(icon_text)
-        icon.setObjectName("settingsIcon")
-        icon.setFixedWidth(24)
+        icon_label = QLabel()
+        icon_label.setObjectName("settingsIcon")
+        icon_label.setFixedSize(28, 28)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setPixmap(self.style().standardIcon(icon).pixmap(20, 20))
         title_label = QLabel(title)
         title_label.setObjectName("settingsCardTitle")
-        header.addWidget(icon)
+        header.addWidget(icon_label)
         header.addWidget(title_label)
         header.addStretch()
 

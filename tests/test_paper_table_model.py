@@ -45,26 +45,37 @@ class PaperTableModelTests(unittest.TestCase):
         model.set_rows(self.rows, selected_ids={"p2"})
 
         self.assertEqual(2, model.rowCount())
-        self.assertEqual(5, model.columnCount())
-        self.assertEqual("Select", model.headerData(0, Qt.Orientation.Horizontal))
-        self.assertEqual("Title", model.headerData(1, Qt.Orientation.Horizontal))
-        self.assertEqual("Status", model.headerData(4, Qt.Orientation.Horizontal))
-        self.assertEqual("First Paper", model.data(model.index(0, 1), Qt.ItemDataRole.DisplayRole))
-        self.assertEqual("main / conference", model.data(model.index(0, 2), Qt.ItemDataRole.DisplayRole))
-        self.assertEqual("Alice, Bob", model.data(model.index(0, 3), Qt.ItemDataRole.DisplayRole))
-        self.assertEqual("PDF", model.data(model.index(0, 4), Qt.ItemDataRole.DisplayRole))
-        self.assertEqual("Abstract", model.data(model.index(1, 4), Qt.ItemDataRole.DisplayRole))
-        self.assertEqual(Qt.CheckState.Unchecked, model.data(model.index(0, 0), Qt.ItemDataRole.CheckStateRole))
-        self.assertEqual(Qt.CheckState.Checked, model.data(model.index(1, 0), Qt.ItemDataRole.CheckStateRole))
+        self.assertEqual(6, model.columnCount())
+        self.assertEqual("", model.headerData(0, Qt.Orientation.Horizontal))
+        self.assertEqual("", model.headerData(1, Qt.Orientation.Horizontal))
+        self.assertEqual("Title", model.headerData(2, Qt.Orientation.Horizontal))
+        self.assertEqual("Status", model.headerData(5, Qt.Orientation.Horizontal))
+        self.assertEqual("1", model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole))
+        self.assertEqual("First Paper", model.data(model.index(0, 2), Qt.ItemDataRole.DisplayRole))
+        self.assertEqual("main / conference", model.data(model.index(0, 3), Qt.ItemDataRole.DisplayRole))
+        self.assertEqual("Alice, Bob", model.data(model.index(0, 4), Qt.ItemDataRole.DisplayRole))
+        self.assertEqual("💬 📄", model.data(model.index(0, 5), Qt.ItemDataRole.DisplayRole))
+        self.assertEqual("💬", model.data(model.index(1, 5), Qt.ItemDataRole.DisplayRole))
+        self.assertEqual(
+            "Abstract, PDF",
+            model.data(model.index(0, 5), Qt.ItemDataRole.ToolTipRole),
+        )
+        self.assertIsNone(model.data(model.index(0, 0), Qt.ItemDataRole.CheckStateRole))
+        self.assertEqual(Qt.CheckState.Unchecked, model.data(model.index(0, 1), Qt.ItemDataRole.CheckStateRole))
+        self.assertEqual(Qt.CheckState.Checked, model.data(model.index(1, 1), Qt.ItemDataRole.CheckStateRole))
+        self.assertEqual(
+            Qt.CheckState.PartiallyChecked,
+            model.headerData(1, Qt.Orientation.Horizontal, Qt.ItemDataRole.CheckStateRole),
+        )
 
     def test_model_updates_selected_ids_from_checkbox_state(self) -> None:
         model = PaperTableModel()
         model.set_rows(self.rows, selected_ids=set())
 
-        self.assertTrue(model.setData(model.index(0, 0), Qt.CheckState.Checked.value, Qt.ItemDataRole.CheckStateRole))
+        self.assertTrue(model.setData(model.index(0, 1), Qt.CheckState.Checked.value, Qt.ItemDataRole.CheckStateRole))
         self.assertEqual({"p1"}, model.selected_ids())
 
-        self.assertTrue(model.setData(model.index(0, 0), Qt.CheckState.Unchecked, Qt.ItemDataRole.CheckStateRole))
+        self.assertTrue(model.setData(model.index(0, 1), Qt.CheckState.Unchecked, Qt.ItemDataRole.CheckStateRole))
         self.assertEqual(set(), model.selected_ids())
 
     def test_model_reconciles_selection_against_visible_rows(self) -> None:
@@ -72,7 +83,17 @@ class PaperTableModelTests(unittest.TestCase):
         model.set_rows([self.rows[0]], selected_ids={"p1", "p2"})
 
         self.assertEqual({"p1"}, model.selected_ids())
-        self.assertEqual(Qt.CheckState.Checked, model.data(model.index(0, 0), Qt.ItemDataRole.CheckStateRole))
+        self.assertEqual(Qt.CheckState.Checked, model.data(model.index(0, 1), Qt.ItemDataRole.CheckStateRole))
+
+    def test_model_notifies_status_updates_for_specific_papers(self) -> None:
+        model = PaperTableModel()
+        model.set_rows(self.rows, selected_ids=set())
+        changed: list[tuple[int, int]] = []
+        model.dataChanged.connect(lambda top, bottom, _roles: changed.append((top.row(), bottom.row())))
+
+        model.notify_rows_changed({"p1"})
+
+        self.assertEqual([(0, 0)], changed)
 
 
 if __name__ == "__main__":

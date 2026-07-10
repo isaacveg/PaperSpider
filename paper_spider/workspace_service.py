@@ -6,7 +6,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from contextlib import nullcontext
+from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
 from .artifacts import (
@@ -28,6 +29,22 @@ class PaperLoadResult:
     storage_key: str
     all_rows: List[dict]
     filtered_rows: List[dict]
+
+
+@dataclass
+class DownloadFailure:
+    paper_id: str
+    title: str
+    message: str
+
+
+@dataclass
+class DownloadBatchResult:
+    succeeded: int = 0
+    skipped: int = 0
+    failures: List[DownloadFailure] = field(default_factory=list)
+    updated_rows: List[dict] = field(default_factory=list)
+    cancelled: bool = False
 
 
 class WorkspaceService:
@@ -60,16 +77,30 @@ class WorkspaceService:
         rows: List[dict],
         cancelled: CancelFn,
         log: Optional[LogFn] = None,
-    ) -> int:
+    ) -> DownloadBatchResult:
         total = len(rows)
-        downloaded = 0
+        result = DownloadBatchResult()
         for idx, row in enumerate(rows, start=1):
             if cancelled():
+                result.cancelled = True
                 break
-            if row.get("abstract_status"):
+            paper_id = str(row.get("paper_id") or "")
+            title = str(row.get("title") or paper_id)
+            if row.get("abstract_status") and row.get("abstract"):
+                result.skipped += 1
                 continue
             paper = paper_from_row(row, conf.slug, storage.year)
-            updated = conf.fetch_details(paper)
+            try:
+                with _conference_cancel_context(conf, cancelled):
+                    updated = conf.fetch_details(paper)
+            except Exception as exc:  # pragma: no cover - exact adapter exceptions vary.
+                if cancelled():
+                    result.cancelled = True
+                    break
+                result.failures.append(DownloadFailure(paper_id, title, str(exc)))
+                if log:
+                    log(f"[{idx}/{total}] failed abstract: {title} ({exc})")
+                continue
             storage.update_details(
                 updated.paper_id,
                 updated.abstract,
@@ -79,10 +110,21 @@ class WorkspaceService:
                 updated.bibtex_url,
                 updated.bibtex,
             )
-            downloaded += 1
+            refreshed = storage.get_paper(updated.paper_id)
+            if refreshed:
+                result.updated_rows.append(refreshed)
+            if updated.abstract and updated.abstract.strip():
+                result.succeeded += 1
+            else:
+                result.failures.append(
+                    DownloadFailure(updated.paper_id, updated.title, "Abstract not found")
+                )
             if log:
-                log(f"[{idx}/{total}] {updated.title}")
-        return downloaded
+                if updated.abstract and updated.abstract.strip():
+                    log(f"[{idx}/{total}] abstract: {updated.title}")
+                else:
+                    log(f"[{idx}/{total}] missing abstract: {updated.title}")
+        return result
 
     def download_pdfs(
         self,
@@ -91,16 +133,32 @@ class WorkspaceService:
         rows: List[dict],
         cancelled: CancelFn,
         log: Optional[LogFn] = None,
-    ) -> int:
+    ) -> DownloadBatchResult:
         total = len(rows)
-        downloaded = 0
+        result = DownloadBatchResult()
         for idx, row in enumerate(rows, start=1):
             if cancelled():
+                result.cancelled = True
                 break
-            if row.get("pdf_status"):
+            paper_id = str(row.get("paper_id") or "")
+            title = str(row.get("title") or paper_id)
+            if row.get("has_pdf"):
+                result.skipped += 1
                 continue
             paper = paper_from_row(row, conf.slug, storage.year)
-            data = conf.fetch_pdf(paper)
+            try:
+                with _conference_cancel_context(conf, cancelled):
+                    data = conf.fetch_pdf(paper)
+                if not _looks_like_pdf(data):
+                    raise RuntimeError("Downloaded file is not a PDF")
+            except Exception as exc:  # pragma: no cover - exact adapter exceptions vary.
+                if cancelled():
+                    result.cancelled = True
+                    break
+                result.failures.append(DownloadFailure(paper_id, title, str(exc)))
+                if log:
+                    log(f"[{idx}/{total}] failed PDF: {title} ({exc})")
+                continue
             base_name = safe_filename(row.get("title") or "", paper.paper_id)
             file_path = unique_artifact_path(
                 storage.paths.pdf_dir,
@@ -110,10 +168,23 @@ class WorkspaceService:
             )
             write_binary_artifact(file_path, data)
             storage.mark_pdf_downloaded(paper.paper_id, file_path)
-            downloaded += 1
+            if paper.pdf_url:
+                storage.update_details(
+                    paper.paper_id,
+                    paper.abstract,
+                    paper.authors,
+                    paper.keywords,
+                    paper.pdf_url,
+                    paper.bibtex_url,
+                    paper.bibtex,
+                )
+            refreshed = storage.get_paper(paper.paper_id)
+            if refreshed:
+                result.updated_rows.append(refreshed)
+            result.succeeded += 1
             if log:
                 log(f"[{idx}/{total}] {paper.paper_id}")
-        return downloaded
+        return result
 
     def export_bibtex(
         self,
@@ -161,6 +232,31 @@ def paper_from_row(row: dict, conf_slug: str, year: int) -> PaperMeta:
         year=year,
         category=category,
         detail_url=row.get("detail_url"),
+        authors=_row_list(row, "authors"),
+        abstract=row.get("abstract"),
+        keywords=_row_list(row, "keywords"),
         pdf_url=row.get("pdf_url"),
         bibtex_url=row.get("bibtex_url"),
+        bibtex=row.get("bibtex"),
     )
+
+
+def _row_list(row: dict, field: str) -> List[str]:
+    list_value = row.get(f"{field}_list")
+    if isinstance(list_value, list):
+        return [str(value).strip() for value in list_value if str(value).strip()]
+    raw_value = row.get(field)
+    if isinstance(raw_value, list):
+        return [str(value).strip() for value in raw_value if str(value).strip()]
+    return []
+
+
+def _looks_like_pdf(data: bytes) -> bool:
+    return b"%PDF" in data[:1024]
+
+
+def _conference_cancel_context(conf, cancelled: CancelFn):
+    cancellable = getattr(conf, "cancellable", None)
+    if callable(cancellable):
+        return cancellable(cancelled)
+    return nullcontext()

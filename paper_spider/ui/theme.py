@@ -83,10 +83,19 @@ def build_stylesheet(appearance: Appearance) -> str:
         color: {appearance.text};
         font-size: 13px;
     }}
+    QLabel {{
+        background: transparent;
+        border: 0;
+    }}
     QFrame, QGroupBox, QListWidget, QTableView, QTextEdit {{
         background: {appearance.surface};
         border: 1px solid {appearance.border};
         border-radius: 8px;
+    }}
+    QLabel {{
+        background: transparent;
+        border: 0;
+        border-radius: 0;
     }}
     QTableView {{
         alternate-background-color: {appearance.surface_alt};
@@ -264,12 +273,48 @@ def build_stylesheet(appearance: Appearance) -> str:
     QLabel#mutedLabel {{
         color: {appearance.muted};
     }}
+    QLabel#filterTitleLabel {{
+        background: transparent;
+        border: 0;
+        padding: 0;
+        font-weight: 700;
+        font-size: 15px;
+    }}
+    QLabel#filterHintLabel {{
+        background: transparent;
+        border: 0;
+        padding: 0;
+        color: {appearance.muted};
+        line-height: 1.25;
+    }}
     QLabel#summaryCard {{
         background: {appearance.surface};
         color: {appearance.text};
         border: 1px solid {appearance.border};
         border-radius: 8px;
         padding: 7px 10px;
+    }}
+    QFrame#summaryStatsCard {{
+        background: {appearance.surface};
+        border: 1px solid {appearance.border};
+        border-radius: 8px;
+    }}
+    QWidget#summaryStat {{
+        background: transparent;
+        border: 0;
+    }}
+    QLabel#summaryStatLabel {{
+        background: transparent;
+        border: 0;
+        color: {appearance.muted};
+        font-size: 11px;
+    }}
+    QLabel#summaryStatValue {{
+        background: transparent;
+        border: 0;
+        color: {appearance.text};
+        font-size: 14px;
+        font-weight: 700;
     }}
     QLabel#detailsFeedbackLabel {{
         color: {appearance.accent_color};
@@ -396,8 +441,70 @@ def build_stylesheet(appearance: Appearance) -> str:
         background: transparent;
         border: 0;
         color: {appearance.accent_color};
-        font-size: 18px;
+    }}
+    QLabel#settingsUnitLabel {{
+        background: transparent;
+        border: 0;
+        color: {appearance.text};
+        padding: 0 6px;
+        font-weight: 600;
+        min-width: 28px;
+    }}
+    QFrame#framelessTitleBar {{
+        background: {appearance.surface};
+        border: 0;
+        border-bottom: 1px solid {appearance.border};
+        border-radius: 0;
+    }}
+    QLabel#framelessTitleLabel {{
+        background: transparent;
+        border: 0;
+        color: {appearance.text};
         font-weight: 700;
+    }}
+    QWidget#windowControls {{
+        background: transparent;
+        border: 0;
+    }}
+    QToolButton#trafficCloseButton,
+    QToolButton#trafficMinimizeButton,
+    QToolButton#trafficZoomButton {{
+        border: 0;
+        border-radius: 6px;
+        min-width: 12px;
+        max-width: 12px;
+        min-height: 12px;
+        max-height: 12px;
+        padding: 0;
+    }}
+    QToolButton#trafficCloseButton {{
+        background: #ff5f57;
+    }}
+    QToolButton#trafficMinimizeButton {{
+        background: #ffbd2e;
+    }}
+    QToolButton#trafficZoomButton {{
+        background: #28c840;
+    }}
+    QToolButton#windowMinimizeButton,
+    QToolButton#windowMaximizeButton,
+    QToolButton#windowCloseButton {{
+        background: transparent;
+        color: {appearance.text};
+        border: 0;
+        border-radius: 5px;
+        min-width: 34px;
+        min-height: 26px;
+        padding: 0;
+        font-weight: 600;
+    }}
+    QToolButton#windowMinimizeButton:hover,
+    QToolButton#windowMaximizeButton:hover {{
+        background: {hover_bg};
+    }}
+    QToolButton#windowCloseButton:hover {{
+        background: #dc2626;
+        color: white;
     }}
     QProgressBar {{
         background: {appearance.surface};

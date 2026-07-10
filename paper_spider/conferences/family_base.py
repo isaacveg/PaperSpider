@@ -6,11 +6,12 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import json
 import re
 import time
-from typing import List, Optional
+from typing import Callable, Iterator, List, Optional
 from urllib.parse import quote, urljoin
 
 import requests
@@ -27,6 +28,16 @@ class RequestsConferenceBase(ConferenceBase):
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "PaperSpider/0.1 (+https://localhost)"})
         self.request_delay = 0.1
+        self._cancel_checker: Optional[Callable[[], bool]] = None
+
+    @contextmanager
+    def cancellable(self, cancelled: Callable[[], bool]) -> Iterator[None]:
+        previous = self._cancel_checker
+        self._cancel_checker = cancelled
+        try:
+            yield
+        finally:
+            self._cancel_checker = previous
 
     def _request(
         self,
@@ -35,12 +46,13 @@ class RequestsConferenceBase(ConferenceBase):
         binary: bool = False,
         headers: Optional[dict[str, str]] = None,
     ) -> Optional[requests.Response]:
-        if self.request_delay > 0:
-            time.sleep(self.request_delay)
+        self._raise_if_cancelled()
+        self._sleep_request_delay()
         try:
-            resp = self.session.get(url, timeout=30, headers=headers)
+            resp = self.session.get(url, timeout=(5, 20), headers=headers)
         except requests.RequestException:
             return None
+        self._raise_if_cancelled()
         if resp.status_code != 200:
             return None
         if binary:
@@ -50,6 +62,18 @@ class RequestsConferenceBase(ConferenceBase):
 
     def _get(self, url: str, binary: bool = False) -> Optional[requests.Response]:
         return self._request(url, binary=binary)
+
+    def _sleep_request_delay(self) -> None:
+        remaining = self.request_delay
+        while remaining > 0:
+            self._raise_if_cancelled()
+            interval = min(remaining, 0.05)
+            time.sleep(interval)
+            remaining -= interval
+
+    def _raise_if_cancelled(self) -> None:
+        if self._cancel_checker and self._cancel_checker():
+            raise RuntimeError("Request cancelled")
 
 
 class AclAnthologyFamilyBase(RequestsConferenceBase):

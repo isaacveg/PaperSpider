@@ -15,6 +15,7 @@ from paper_spider.storage import PaperStorage
 from paper_spider.ui.dataset_dialog import SelectionResult
 from paper_spider.ui.workers import CancelToken
 from paper_spider.ui.workspace_window import FilterRow, WorkspaceWindow
+from paper_spider.workspace_service import DownloadBatchResult
 
 
 def app() -> QApplication:
@@ -103,10 +104,11 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.assertIs(self.window.table_stack.currentWidget(), self.window.empty_state)
         self.assertIn("Fetch", self.window.empty_state.title_label.text())
 
-    def test_workspace_window_uses_theme_aware_titlebar_hint(self) -> None:
+    def test_workspace_window_uses_frameless_theme_aware_chrome(self) -> None:
         self.assertTrue(
-            self.window.windowFlags() & Qt.WindowType.NoTitleBarBackgroundHint
+            self.window.windowFlags() & Qt.WindowType.FramelessWindowHint
         )
+        self.assertIsNotNone(self.window.top_bar.window_controls)
 
     def test_render_rows_keeps_artifact_actions_out_of_table(self) -> None:
         rows = self._rows()
@@ -116,36 +118,43 @@ class WorkspaceWindowUiTests(unittest.TestCase):
 
         self.assertIs(self.window.table_stack.currentWidget(), self.window.table)
         self.assertIsInstance(self.window.table, QTableView)
-        self.assertEqual(5, self.window.paper_model.columnCount())
+        self.assertEqual(6, self.window.paper_model.columnCount())
         headers = [
             self.window.paper_model.headerData(index, Qt.Orientation.Horizontal)
             for index in range(self.window.paper_model.columnCount())
         ]
-        self.assertEqual(["Select", "Title", "Category", "Authors", "Status"], headers)
+        self.assertEqual(["", "", "Title", "Category", "Authors", "Status"], headers)
+        self.assertEqual(
+            "1",
+            self.window.paper_model.data(
+                self.window.paper_model.index(0, 0),
+                Qt.ItemDataRole.DisplayRole,
+            ),
+        )
         self.assertEqual(
             "First Paper",
             self.window.paper_model.data(
-                self.window.paper_model.index(0, 1),
+                self.window.paper_model.index(0, 2),
                 Qt.ItemDataRole.DisplayRole,
             ),
         )
         self.assertEqual(
-            "PDF",
+            "💬 📄",
             self.window.paper_model.data(
-                self.window.paper_model.index(0, 4),
+                self.window.paper_model.index(0, 5),
                 Qt.ItemDataRole.DisplayRole,
             ),
         )
-        self.assertIn("Total 2", self.window.summary_strip.summary_label.text())
-        self.assertIn("PDFs 1/2", self.window.summary_strip.summary_label.text())
+        self.assertEqual("2", self.window.summary_strip.total_value.text())
+        self.assertEqual("1", self.window.summary_strip.pdfs_value.text())
 
     def test_table_gives_title_priority_over_authors(self) -> None:
         header = self.window.table.horizontalHeader()
 
-        self.assertEqual(QHeaderView.ResizeMode.Stretch, header.sectionResizeMode(1))
-        self.assertEqual(QHeaderView.ResizeMode.Fixed, header.sectionResizeMode(3))
-        self.assertEqual(QHeaderView.ResizeMode.ResizeToContents, header.sectionResizeMode(4))
-        self.assertLessEqual(self.window.table.columnWidth(3), 260)
+        self.assertEqual(QHeaderView.ResizeMode.Stretch, header.sectionResizeMode(2))
+        self.assertEqual(QHeaderView.ResizeMode.Fixed, header.sectionResizeMode(4))
+        self.assertEqual(QHeaderView.ResizeMode.ResizeToContents, header.sectionResizeMode(5))
+        self.assertLessEqual(self.window.table.columnWidth(4), 260)
 
     def test_quick_filter_searches_current_filtered_rows_and_updates_count(self) -> None:
         rows = self._rows()
@@ -160,11 +169,11 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.assertEqual(
             "Second Paper",
             self.window.paper_model.data(
-                self.window.paper_model.index(0, 1),
+                self.window.paper_model.index(0, 2),
                 Qt.ItemDataRole.DisplayRole,
             ),
         )
-        self.assertIn("Showing 1/2", self.window.summary_strip.summary_label.text())
+        self.assertEqual("1", self.window.summary_strip.filtered_value.text())
 
     def test_empty_filter_result_does_not_fall_back_to_all_rows(self) -> None:
         rows = self._rows()
@@ -174,7 +183,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.window._render_rows(self.window._quick_filtered_rows())
 
         self.assertEqual(0, self.window.paper_model.rowCount())
-        self.assertIn("Filtered 0/2", self.window.summary_strip.summary_label.text())
+        self.assertEqual("0", self.window.summary_strip.filtered_value.text())
 
     def test_quick_filter_is_debounced_and_precomputes_search_text(self) -> None:
         rows = self._rows()
@@ -188,16 +197,38 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         summary_buttons = self.window.summary_strip.findChildren(QPushButton)
 
         self.assertEqual([], summary_buttons)
-        self.assertIs(self.window.select_all_btn.parent(), self.window.selection_controls)
+        self.assertIs(self.window.invert_btn.parent(), self.window.selection_controls)
+        self.assertEqual(
+            ["Invert"],
+            [button.text() for button in self.window.selection_controls.findChildren(QPushButton)],
+        )
         self.assertLess(
             self.window.action_layout.indexOf(self.window.selection_controls),
             self.window.action_layout.indexOf(self.window.abstract_btn),
         )
 
+    def test_select_header_toggles_visible_selection(self) -> None:
+        rows = self._rows()
+        self.window._all_rows = rows
+        self.window._filtered_rows = rows
+        self.window._render_rows(rows)
+
+        self.window._toggle_header_selection(1)
+        self.assertEqual({"p1", "p2"}, self.window.paper_model.selected_ids())
+        self.assertEqual(
+            Qt.CheckState.Checked,
+            self.window.paper_model.headerData(
+                1,
+                Qt.Orientation.Horizontal,
+                Qt.ItemDataRole.CheckStateRole,
+            ),
+        )
+
+        self.window._toggle_header_selection(1)
+        self.assertEqual(set(), self.window.paper_model.selected_ids())
+
     def test_main_buttons_have_readable_theme_roles(self) -> None:
         secondary_buttons = [
-            self.window.select_all_btn,
-            self.window.select_none_btn,
             self.window.invert_btn,
             self.window.abstract_btn,
             self.window.bib_btn,
@@ -302,7 +333,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
 
         self.assertGreaterEqual(row.role_combo.minimumWidth(), 100)
         self.assertGreaterEqual(row.field_combo.minimumWidth(), 96)
-        self.assertGreaterEqual(row.mode_combo.minimumWidth(), 88)
+        self.assertGreaterEqual(row.mode_combo.minimumWidth(), 100)
         self.assertGreater(row.role_combo.maximumWidth(), row.role_combo.minimumWidth())
         self.assertGreater(row.field_combo.maximumWidth(), row.field_combo.minimumWidth())
         self.assertGreater(row.mode_combo.maximumWidth(), row.mode_combo.minimumWidth())
@@ -333,7 +364,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.window._filtered_rows = rows
         self.window._render_rows(rows)
         self.window.paper_model.setData(
-            self.window.paper_model.index(0, 0),
+            self.window.paper_model.index(0, 1),
             Qt.CheckState.Checked,
             Qt.ItemDataRole.CheckStateRole,
         )
@@ -344,11 +375,11 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.assertEqual(
             Qt.CheckState.Checked,
             self.window.paper_model.data(
-                self.window.paper_model.index(0, 0),
+                self.window.paper_model.index(0, 1),
                 Qt.ItemDataRole.CheckStateRole,
             ),
         )
-        self.assertIn("Selected 1/2", self.window.summary_strip.selection_label.text())
+        self.assertEqual({"p1"}, self.window.paper_model.selected_ids())
 
     def test_quick_filter_clears_selections_hidden_from_current_list(self) -> None:
         rows = self._rows()
@@ -356,7 +387,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.window._filtered_rows = rows
         self.window._render_rows(rows)
         self.window.paper_model.setData(
-            self.window.paper_model.index(0, 0),
+            self.window.paper_model.index(0, 1),
             Qt.CheckState.Checked,
             Qt.ItemDataRole.CheckStateRole,
         )
@@ -370,7 +401,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.assertEqual(
             Qt.CheckState.Unchecked,
             self.window.paper_model.data(
-                self.window.paper_model.index(0, 0),
+                self.window.paper_model.index(0, 1),
                 Qt.ItemDataRole.CheckStateRole,
             ),
         )
@@ -431,6 +462,64 @@ class WorkspaceWindowUiTests(unittest.TestCase):
 
         self.assertEqual([[rows[1]]], downloaded_pdf_rows)
         self.assertEqual([[rows[1]]], exported_bib_rows)
+
+    def test_double_clicking_row_with_pdf_opens_pdf_file(self) -> None:
+        rows = self._rows()
+        self.window._all_rows = rows
+        self.window._filtered_rows = rows
+        self.window._render_rows(rows)
+        opened: list[str] = []
+        self.window._open_file = opened.append
+
+        self.window._on_table_double_clicked(self.window.paper_model.index(0, 1))
+
+        self.assertEqual(["/tmp/first.pdf"], opened)
+
+    def test_download_completion_patches_rows_without_reloading_whole_table(self) -> None:
+        rows = self._rows()
+        self.window._all_rows = rows
+        self.window._filtered_rows = rows
+        self.window._render_rows(rows)
+        self.window.table.setCurrentIndex(self.window.paper_model.index(1, 1))
+        self.window._selected_paper_ids = {"p2"}
+        self.window.pdf_cancel_token = CancelToken()
+        self.window._load_papers = lambda force_refresh=False: self.fail("unexpected full reload")
+        result = DownloadBatchResult(
+            succeeded=1,
+            updated_rows=[
+                {
+                    **rows[1],
+                    "abstract": "Now available",
+                    "abstract_status": 1,
+                    "has_pdf": True,
+                    "pdf_status": 1,
+                    "pdf_path": "/tmp/second.pdf",
+                }
+            ],
+        )
+
+        with patch("paper_spider.ui.workspace_window.QMessageBox.information"):
+            self.window._on_pdfs_done(result)
+
+        self.assertEqual({"p2"}, self.window.paper_model.selected_ids())
+        self.assertEqual("Second Paper", self.window.details_panel.title_label.text())
+        self.assertIn("Now available", self.window.details_panel.abstract_text.toPlainText())
+
+    def test_quick_filter_shortcut_focuses_search_box(self) -> None:
+        self.window.quick_filter_edit.setText("Agent")
+        self.window.quick_filter_edit.clearFocus()
+
+        self.window._focus_quick_filter()
+
+        self.assertTrue(self.window.quick_filter_edit.hasSelectedText())
+
+    def test_filter_keyword_return_applies_filters(self) -> None:
+        calls: list[str] = []
+        self.window._load_papers = lambda force_refresh=False: calls.append("apply")
+
+        self.window.filter_rows[0].text_edit.returnPressed.emit()
+
+        self.assertEqual(["apply"], calls)
 
     def test_finishing_one_download_keeps_other_cancel_control_visible(self) -> None:
         self.window.abstract_cancel_token = CancelToken()

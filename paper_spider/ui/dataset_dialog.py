@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
 
 from ..conferences import available_conferences
 from .theme import apply_theme
+from .window_chrome import FramelessTitleBar
 
 YEAR_MIN = 1980
 YEAR_MAX = 2100
@@ -74,6 +75,13 @@ class DatasetDialog(QDialog):
         apply_theme(self, self._settings)
 
     def _build_ui(self) -> None:
+        root_layout = QVBoxLayout()
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        self.title_bar = FramelessTitleBar(self, "Datasets", self)
+        root_layout.addWidget(self.title_bar)
+
+        content = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(12)
@@ -145,7 +153,9 @@ class DatasetDialog(QDialog):
         btn_layout.addWidget(cancel_btn)
         layout.addLayout(btn_layout)
 
-        self.setLayout(layout)
+        content.setLayout(layout)
+        root_layout.addWidget(content, stretch=1)
+        self.setLayout(root_layout)
 
     def _load_previous_state(self) -> None:
         base_dir = self._settings.value("base_dir", "")

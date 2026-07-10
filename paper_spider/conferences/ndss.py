@@ -14,6 +14,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from ..models import PaperCategory, PaperMeta
+from .author_utils import split_author_names
 from .request_base import RequestsConferenceBase
 
 
@@ -176,10 +177,8 @@ class NdssConference(RequestsConferenceBase):
         while cleaned != previous:
             previous = cleaned
             cleaned = re.sub(r"\([^()]*\)", "", cleaned)
-        cleaned = re.sub(r"\s+and\s+", ", ", cleaned, flags=re.IGNORECASE)
         cleaned = self._normalize_text(cleaned)
-        parts = [part.strip(" ,") for part in cleaned.split(",")]
-        return [part for part in parts if part]
+        return split_author_names(cleaned)
 
     def _generate_bibtex(self, paper: PaperMeta) -> str:
         fields = [

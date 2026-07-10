@@ -11,8 +11,8 @@ import subprocess
 import sys
 from typing import List, Optional
 
-from PyQt6.QtCore import Qt, QThreadPool, QTimer, QUrl
-from PyQt6.QtGui import QDesktopServices, QGuiApplication
+from PyQt6.QtCore import QRect, Qt, QThreadPool, QTimer, QUrl
+from PyQt6.QtGui import QDesktopServices, QGuiApplication, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -29,6 +29,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QSpinBox,
+    QStyle,
+    QStyleOptionButton,
     QStackedWidget,
     QTableView,
     QVBoxLayout,
@@ -38,7 +40,7 @@ from PyQt6.QtWidgets import (
 from ..conferences import available_conferences
 from ..filtering import FilterConfig
 from ..storage import PaperStorage
-from ..workspace_service import PaperLoadResult, WorkspaceService
+from ..workspace_service import DownloadBatchResult, PaperLoadResult, WorkspaceService
 from .dataset_dialog import DatasetDialog
 from .export_dialog import ExportDialog
 from .paper_table_model import PaperTableModel
@@ -60,7 +62,7 @@ class FilterRow(QFrame):
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         layout = QVBoxLayout()
-        layout.setContentsMargins(6, 5, 6, 5)
+        layout.setContentsMargins(5, 5, 5, 5)
 
         self.enable_checkbox = QCheckBox()
         self.enable_checkbox.setChecked(True)
@@ -81,7 +83,7 @@ class FilterRow(QFrame):
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("has", "contains")
         self.mode_combo.addItem("not", "not_contains")
-        self.mode_combo.setMinimumWidth(88)
+        self.mode_combo.setMinimumWidth(100)
         self.mode_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.mode_combo.setToolTip("has = contains; not = does not contain")
 
@@ -111,11 +113,11 @@ class FilterRow(QFrame):
         self.control_row = QWidget()
         control_layout = QHBoxLayout()
         control_layout.setContentsMargins(0, 0, 0, 0)
-        control_layout.setSpacing(6)
+        control_layout.setSpacing(4)
         control_layout.addWidget(self.enable_checkbox)
-        control_layout.addWidget(self.role_combo, stretch=3)
+        control_layout.addWidget(self.role_combo, stretch=4)
         control_layout.addWidget(self.field_combo, stretch=3)
-        control_layout.addWidget(self.mode_combo, stretch=2)
+        control_layout.addWidget(self.mode_combo, stretch=3)
         self.control_row.setLayout(control_layout)
 
         self.text_row = QWidget()
@@ -139,6 +141,38 @@ class FilterRow(QFrame):
             role=str(self.role_combo.currentData()),
             value=self.text_edit.text().strip(),
         )
+
+
+class SelectHeaderView(QHeaderView):
+    def paintSection(self, painter, rect: QRect, logicalIndex: int) -> None:
+        super().paintSection(painter, rect, logicalIndex)
+        if logicalIndex != 1 or self.model() is None:
+            return
+        state = self.model().headerData(
+            1,
+            Qt.Orientation.Horizontal,
+            Qt.ItemDataRole.CheckStateRole,
+        )
+        option = QStyleOptionButton()
+        option.state = QStyle.StateFlag.State_Enabled
+        if state == Qt.CheckState.Checked:
+            option.state |= QStyle.StateFlag.State_On
+        elif state == Qt.CheckState.PartiallyChecked:
+            option.state |= QStyle.StateFlag.State_NoChange
+        else:
+            option.state |= QStyle.StateFlag.State_Off
+        indicator = self.style().subElementRect(
+            QStyle.SubElement.SE_CheckBoxIndicator,
+            option,
+            self,
+        )
+        option.rect = QRect(
+            rect.center().x() - indicator.width() // 2,
+            rect.center().y() - indicator.height() // 2,
+            indicator.width(),
+            indicator.height(),
+        )
+        self.style().drawControl(QStyle.ControlElement.CE_CheckBox, option, painter, self)
 
 
 class WorkspaceWindow(QMainWindow):
@@ -174,28 +208,32 @@ class WorkspaceWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.setContentsMargins(8, 8, 8, 8)
 
-        self.top_bar = TopBar()
+        self.summary_strip = SummaryStrip()
+        self.top_bar = TopBar(
+            self,
+            include_window_controls=True,
+            summary_widget=self.summary_strip,
+        )
         self.top_bar.settings_clicked.connect(self._open_settings)
         self.top_bar.dataset_clicked.connect(self._open_dataset_dialog)
         layout.addWidget(self.top_bar)
 
-        self.summary_strip = SummaryStrip()
-
         filter_panel = QFrame()
         filter_panel.setObjectName("filterSidebar")
         filter_panel.setFrameShape(QFrame.Shape.StyledPanel)
-        filter_panel.setMinimumWidth(380)
-        filter_panel.setMaximumWidth(460)
+        filter_panel.setMinimumWidth(340)
+        filter_panel.setMaximumWidth(400)
         filter_panel_layout = QVBoxLayout()
         filter_panel_layout.setContentsMargins(8, 0, 12, 0)
         filter_title = QLabel("Filters")
-        filter_title.setStyleSheet("font-weight: 700;")
+        filter_title.setObjectName("filterTitleLabel")
         filter_panel_layout.addWidget(filter_title)
 
         filter_hint = QLabel(
             "Must rules are required. Must not rules exclude matches. "
             "Should rules apply only when the minimum below is greater than 0."
         )
+        filter_hint.setObjectName("filterHintLabel")
         filter_hint.setWordWrap(True)
         filter_panel_layout.addWidget(filter_hint)
 
@@ -258,14 +296,18 @@ class WorkspaceWindow(QMainWindow):
         self.paper_model.selection_changed.connect(self._on_model_selection_changed)
         self.table = QTableView()
         self.table.setModel(self.paper_model)
+        self.table.setHorizontalHeader(SelectHeaderView(Qt.Orientation.Horizontal, self.table))
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
+        header.setSectionsClickable(True)
+        header.sectionClicked.connect(self._toggle_header_selection)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.setColumnWidth(3, 220)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setColumnWidth(4, 220)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
@@ -287,17 +329,9 @@ class WorkspaceWindow(QMainWindow):
         selection_layout = QHBoxLayout()
         selection_layout.setContentsMargins(0, 0, 0, 0)
         selection_layout.setSpacing(4)
-        self.select_all_btn = QPushButton("Select all")
-        self.select_all_btn.setObjectName("secondaryButton")
-        self.select_all_btn.clicked.connect(lambda: self._set_selection_state(True))
-        self.select_none_btn = QPushButton("Select none")
-        self.select_none_btn.setObjectName("secondaryButton")
-        self.select_none_btn.clicked.connect(lambda: self._set_selection_state(False))
         self.invert_btn = QPushButton("Invert")
         self.invert_btn.setObjectName("secondaryButton")
         self.invert_btn.clicked.connect(self._invert_selection)
-        selection_layout.addWidget(self.select_all_btn)
-        selection_layout.addWidget(self.select_none_btn)
         selection_layout.addWidget(self.invert_btn)
         self.selection_controls.setLayout(selection_layout)
         self.abstract_btn = QPushButton("Download abstracts")
@@ -328,14 +362,16 @@ class WorkspaceWindow(QMainWindow):
         center_header.setContentsMargins(0, 0, 0, 0)
         self.quick_filter_edit = QLineEdit()
         self.quick_filter_edit.setClearButtonEnabled(True)
-        self.quick_filter_edit.setPlaceholderText("Quick filter current list")
+        self.quick_filter_edit.setPlaceholderText("Quick filter")
         self.quick_filter_edit.setMaximumWidth(280)
+        self.quick_filter_shortcut = QShortcut(QKeySequence.StandardKey.Find, self)
+        self.quick_filter_shortcut.activated.connect(self._focus_quick_filter)
         self.quick_filter_timer = QTimer(self)
         self.quick_filter_timer.setSingleShot(True)
         self.quick_filter_timer.setInterval(180)
         self.quick_filter_timer.timeout.connect(self._apply_quick_filter)
         self.quick_filter_edit.textChanged.connect(self._schedule_quick_filter)
-        center_header.addWidget(self.summary_strip, stretch=1)
+        center_header.addStretch(1)
         center_header.addWidget(self.quick_filter_edit)
         center_layout.addLayout(center_header)
         center_layout.addWidget(self.table_stack, stretch=1)
@@ -343,7 +379,7 @@ class WorkspaceWindow(QMainWindow):
         center_panel.setLayout(center_layout)
 
         self.details_panel = DetailsPanel()
-        self.details_panel.setMinimumWidth(280)
+        self.details_panel.setMinimumWidth(360)
         self.details_panel.download_abstract_clicked.connect(self._download_current_abstract)
         self.details_panel.open_pdf_clicked.connect(self._open_current_pdf)
         self.details_panel.copy_bib_clicked.connect(self._copy_current_bibtex)
@@ -358,6 +394,7 @@ class WorkspaceWindow(QMainWindow):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
+        splitter.setSizes([360, 780, 420])
         layout.addWidget(splitter, stretch=1)
 
         self.log_panel = CollapsibleLogPanel()
@@ -676,6 +713,7 @@ class WorkspaceWindow(QMainWindow):
     def _add_filter(self, default_role: str = "Must") -> None:
         row = FilterRow(default_role=default_role)
         row.remove_btn.clicked.connect(lambda: self._remove_filter(row))
+        row.text_edit.returnPressed.connect(lambda: self._load_papers())
         self.filter_rows.append(row)
         self.filter_layout.addWidget(row)
 
@@ -718,8 +756,6 @@ class WorkspaceWindow(QMainWindow):
         self.bib_btn.setEnabled(not loading)
         self.export_btn.setEnabled(not loading)
         self.quick_filter_edit.setEnabled(not loading)
-        self.select_all_btn.setEnabled(not loading)
-        self.select_none_btn.setEnabled(not loading)
         self.invert_btn.setEnabled(not loading)
         if loading:
             self.status_label.setText(message or "Loading papers...")
@@ -771,6 +807,10 @@ class WorkspaceWindow(QMainWindow):
 
     def _schedule_quick_filter(self) -> None:
         self.quick_filter_timer.start()
+
+    def _focus_quick_filter(self) -> None:
+        self.quick_filter_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self.quick_filter_edit.selectAll()
 
     def _apply_quick_filter(self) -> None:
         self._capture_selected_ids()
@@ -856,6 +896,16 @@ class WorkspaceWindow(QMainWindow):
         if row_idx >= len(self._current_rows):
             return
         self._update_details(row_idx)
+        row = self._current_rows[row_idx]
+        pdf_path = row.get("pdf_path")
+        if pdf_path:
+            self._open_file(str(pdf_path))
+
+    def _toggle_header_selection(self, section: int) -> None:
+        if section != 1:
+            return
+        checked = self.paper_model.selection_state() != Qt.CheckState.Checked
+        self._set_selection_state(checked)
 
     def _set_selection_state(self, checked: bool) -> None:
         visible_ids = {paper_id_for_row(row) for row in self._current_rows}
@@ -936,18 +986,17 @@ class WorkspaceWindow(QMainWindow):
         rows: List[dict],
         cancel: CancelToken,
         log=None,
-    ) -> int:
+    ) -> DownloadBatchResult:
         return self.service.download_abstracts(conf, storage, rows, cancel.cancelled, log=log)
 
-    def _on_abstracts_done(self, count: int) -> None:
-        cancelled = self.abstract_cancel_token.cancelled() if self.abstract_cancel_token else False
+    def _on_abstracts_done(self, result: DownloadBatchResult) -> None:
+        cancelled = result.cancelled or (
+            self.abstract_cancel_token.cancelled() if self.abstract_cancel_token else False
+        )
         self.abstract_cancel_token = None
         self._refresh_download_controls()
-        if cancelled:
-            QMessageBox.information(self, "Canceled", f"Downloaded {count} abstracts")
-        else:
-            QMessageBox.information(self, "Done", f"Downloaded {count} abstracts")
-        self._load_papers(force_refresh=True)
+        self._apply_download_updates(result.updated_rows)
+        self._show_download_result("abstracts", result, cancelled)
 
     def _download_pdfs(self) -> None:
         if self.pdf_cancel_token:
@@ -993,18 +1042,17 @@ class WorkspaceWindow(QMainWindow):
         rows: List[dict],
         cancel: CancelToken,
         log=None,
-    ) -> int:
+    ) -> DownloadBatchResult:
         return self.service.download_pdfs(conf, storage, rows, cancel.cancelled, log=log)
 
-    def _on_pdfs_done(self, count: int) -> None:
-        cancelled = self.pdf_cancel_token.cancelled() if self.pdf_cancel_token else False
+    def _on_pdfs_done(self, result: DownloadBatchResult) -> None:
+        cancelled = result.cancelled or (
+            self.pdf_cancel_token.cancelled() if self.pdf_cancel_token else False
+        )
         self.pdf_cancel_token = None
         self._refresh_download_controls()
-        if cancelled:
-            QMessageBox.information(self, "Canceled", f"Downloaded {count} PDFs")
-        else:
-            QMessageBox.information(self, "Done", f"Downloaded {count} PDFs")
-        self._load_papers(force_refresh=True)
+        self._apply_download_updates(result.updated_rows)
+        self._show_download_result("PDFs", result, cancelled)
 
     def _export_bibtex(self) -> None:
         if not self._ensure_ready():
@@ -1036,6 +1084,54 @@ class WorkspaceWindow(QMainWindow):
         self._refresh_download_controls()
         QMessageBox.information(self, "Done", f"Exported {count} bibtex files")
         self._load_papers(force_refresh=True)
+
+    def _apply_download_updates(self, updated_rows: List[dict]) -> None:
+        if not updated_rows:
+            self._update_summary()
+            self._update_details(self.table.currentIndex().row())
+            return
+        active_id = paper_id_for_row(self._current_row() or {})
+        updates = {paper_id_for_row(row): row for row in updated_rows if paper_id_for_row(row)}
+        for rows in (self._all_rows, self._filtered_rows, self._current_rows):
+            for row in rows:
+                paper_id = paper_id_for_row(row)
+                if paper_id in updates:
+                    row.clear()
+                    row.update(updates[paper_id])
+                    self._prepare_quick_search([row])
+        self.paper_model.notify_rows_changed(set(updates))
+        self.paper_model.set_selected_ids(self._selected_paper_ids)
+        self._update_summary()
+        if active_id:
+            for row_idx, row in enumerate(self._current_rows):
+                if paper_id_for_row(row) == active_id:
+                    self._focus_row(row_idx)
+                    break
+            else:
+                self._update_details(self.table.currentIndex().row())
+        else:
+            self._update_details(self.table.currentIndex().row())
+
+    def _show_download_result(
+        self,
+        artifact_name: str,
+        result: DownloadBatchResult,
+        cancelled: bool,
+    ) -> None:
+        if cancelled:
+            title = "Canceled"
+        elif result.failures:
+            title = "Finished with issues"
+        else:
+            title = "Done"
+        parts = [f"Downloaded {result.succeeded} {artifact_name}"]
+        if result.skipped:
+            parts.append(f"Skipped {result.skipped} already available")
+        if result.failures:
+            parts.append(f"Failed {len(result.failures)}")
+            for failure in result.failures[:5]:
+                self._log(f"Failed {artifact_name}: {failure.title} ({failure.message})")
+        QMessageBox.information(self, title, "\n".join(parts))
 
     def _on_worker_error(self, message: str) -> None:
         self._set_rows_loading(False)

@@ -257,6 +257,19 @@ class PaperStorage:
             rows = conn.execute(sql, params).fetchall()
         return [self._normalize_row(dict(row)) for row in rows]
 
+    def get_paper(self, paper_id: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM papers
+                WHERE conf = ? AND year = ? AND paper_id = ?
+                """,
+                (self.conf_slug, self.year, paper_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._normalize_row(dict(row))
+
     def count_papers(self) -> int:
         with self._connect() as conn:
             row = conn.execute(

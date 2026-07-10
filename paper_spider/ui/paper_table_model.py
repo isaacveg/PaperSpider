@@ -16,7 +16,7 @@ from .workspace_view_helpers import paper_id_for_row, reconcile_selected_ids
 class PaperTableModel(QAbstractTableModel):
     selection_changed = pyqtSignal()
 
-    HEADERS = ["Select", "Title", "Category", "Authors", "Status"]
+    HEADERS = ["", "", "Title", "Category", "Authors", "Status"]
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -39,9 +39,12 @@ class PaperTableModel(QAbstractTableModel):
         orientation: Qt.Orientation,
         role: int = Qt.ItemDataRole.DisplayRole,
     ):
-        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            if 0 <= section < len(self.HEADERS):
-                return self.HEADERS[section]
+        if orientation != Qt.Orientation.Horizontal or not 0 <= section < len(self.HEADERS):
+            return None
+        if role == Qt.ItemDataRole.DisplayRole:
+            return self.HEADERS[section]
+        if section == 1 and role == Qt.ItemDataRole.CheckStateRole:
+            return self.selection_state()
         return None
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
@@ -49,36 +52,51 @@ class PaperTableModel(QAbstractTableModel):
             return None
         row = self._rows[index.row()]
         column = index.column()
-        if role == Qt.ItemDataRole.CheckStateRole and column == 0:
+        if role == Qt.ItemDataRole.CheckStateRole and column == 1:
             return (
                 Qt.CheckState.Checked
                 if paper_id_for_row(row) in self._selected_ids
                 else Qt.CheckState.Unchecked
             )
+        if role == Qt.ItemDataRole.TextAlignmentRole and column in (0, 5):
+            return Qt.AlignmentFlag.AlignCenter
+        if role == Qt.ItemDataRole.ToolTipRole and column == 5:
+            return self._status_tooltip(row)
         if role != Qt.ItemDataRole.DisplayRole:
             return None
-        if column == 1:
-            return row.get("title") or ""
+        if column == 0:
+            return str(index.row() + 1)
         if column == 2:
-            return row.get("category_text") or ""
+            return row.get("title") or ""
         if column == 3:
-            return row.get("authors_text") or ""
+            return row.get("category_text") or ""
         if column == 4:
+            return row.get("authors_text") or ""
+        if column == 5:
             return self._status_text(row)
         return ""
 
     def _status_text(self, row: dict) -> str:
-        if row.get("has_pdf") or row.get("pdf_status") or row.get("pdf_path"):
-            return "PDF"
+        icons = []
         if row.get("abstract_status") or row.get("abstract"):
-            return "Abstract"
-        return ""
+            icons.append("💬")
+        if row.get("has_pdf"):
+            icons.append("📄")
+        return " ".join(icons)
+
+    def _status_tooltip(self, row: dict) -> str:
+        labels = []
+        if row.get("abstract_status") or row.get("abstract"):
+            labels.append("Abstract")
+        if row.get("has_pdf"):
+            labels.append("PDF")
+        return ", ".join(labels)
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
         flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-        if index.column() == 0:
+        if index.column() == 1:
             flags |= Qt.ItemFlag.ItemIsUserCheckable
         return flags
 
@@ -90,7 +108,7 @@ class PaperTableModel(QAbstractTableModel):
     ) -> bool:
         if (
             not index.isValid()
-            or index.column() != 0
+            or index.column() != 1
             or index.row() >= len(self._rows)
             or role != Qt.ItemDataRole.CheckStateRole
         ):
@@ -101,6 +119,7 @@ class PaperTableModel(QAbstractTableModel):
         else:
             self._selected_ids.discard(paper_id)
         self.dataChanged.emit(index, index, [Qt.ItemDataRole.CheckStateRole])
+        self.headerDataChanged.emit(Qt.Orientation.Horizontal, 1, 1)
         self.selection_changed.emit()
         return True
 
@@ -130,8 +149,34 @@ class PaperTableModel(QAbstractTableModel):
         old_ids = set(self._selected_ids)
         self._selected_ids = reconcile_selected_ids(self._rows, selected_ids)
         if self._rows:
-            top_left = self.index(0, 0)
-            bottom_right = self.index(len(self._rows) - 1, 0)
+            top_left = self.index(0, 1)
+            bottom_right = self.index(len(self._rows) - 1, 1)
             self.dataChanged.emit(top_left, bottom_right, [Qt.ItemDataRole.CheckStateRole])
+        self.headerDataChanged.emit(Qt.Orientation.Horizontal, 1, 1)
         if old_ids != self._selected_ids:
             self.selection_changed.emit()
+
+    def selection_state(self) -> Qt.CheckState:
+        if not self._rows:
+            return Qt.CheckState.Unchecked
+        visible_ids = {paper_id_for_row(row) for row in self._rows}
+        selected_visible = visible_ids & self._selected_ids
+        if not selected_visible:
+            return Qt.CheckState.Unchecked
+        if selected_visible == visible_ids:
+            return Qt.CheckState.Checked
+        return Qt.CheckState.PartiallyChecked
+
+    def notify_rows_changed(self, paper_ids: AbstractSet[str]) -> None:
+        roles = [
+            Qt.ItemDataRole.DisplayRole,
+            Qt.ItemDataRole.ToolTipRole,
+            Qt.ItemDataRole.CheckStateRole,
+        ]
+        for row_idx, row in enumerate(self._rows):
+            if paper_id_for_row(row) in paper_ids:
+                self.dataChanged.emit(
+                    self.index(row_idx, 0),
+                    self.index(row_idx, self.columnCount() - 1),
+                    roles,
+                )

@@ -14,8 +14,9 @@ from paper_spider.models import PaperMeta
 
 
 class _FakeResponse:
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str = "", content: bytes = b"") -> None:
         self.text = text
+        self.content = content or text.encode("utf-8")
         self.status_code = 200
         self.encoding = "utf-8"
 
@@ -180,6 +181,33 @@ class IclrConferenceTests(unittest.TestCase):
             paper = PaperMeta(paper_id="n1", title="t", conf="iclr", year=2024)
             bibtex = conf.fetch_bibtex(paper)
         self.assertIn("@inproceedings", bibtex)
+
+    def test_fetch_pdf_falls_back_to_openreview_attachment_endpoint(self) -> None:
+        conf = IclrConference()
+        seen_urls: list[str] = []
+
+        def fake_get(url: str, binary: bool = False, params=None):
+            seen_urls.append(url)
+            if "attachment" in url:
+                return _FakeResponse(content=b"%PDF-1.7 attachment")
+            return None
+
+        with patch.object(conf, "_get", side_effect=fake_get):
+            paper = PaperMeta(paper_id="forum1", title="t", conf="iclr", year=2025)
+            data = conf.fetch_pdf(paper)
+
+        self.assertIn(b"%PDF", data)
+        self.assertTrue(any("attachment?id=forum1&name=pdf" in url for url in seen_urls))
+
+    def test_content_list_handles_openreview_value_lists(self) -> None:
+        conf = IclrConference()
+
+        values = conf._content_list(
+            {"authors": {"value": ["Alice", {"name": "Bob"}, {"value": "Carol"}]}},
+            "authors",
+        )
+
+        self.assertEqual(["Alice", "Bob", "Carol"], values)
 
 
 if __name__ == "__main__":
