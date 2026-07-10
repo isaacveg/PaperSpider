@@ -29,3 +29,6 @@ Thumbs.db
 
 # Isolated Codex feature worktrees
 .worktrees/
+
+# Superpowers task handoff and progress scratch files
+.superpowers/
