@@ -26,3 +26,6 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
+
+# Isolated Codex feature worktrees
+.worktrees/
