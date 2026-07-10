@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..export_utils import build_export_text
+from .theme import apply_theme
 
 
 class ExportDialog(QDialog):
@@ -31,6 +32,7 @@ class ExportDialog(QDialog):
         self.setWindowTitle("Export Selected Papers")
         self.resize(760, 520)
         self._build_ui()
+        apply_theme(self)
 
     def _build_ui(self) -> None:
         layout = QGridLayout()
@@ -49,10 +51,13 @@ class ExportDialog(QDialog):
         self.abstract_check.setChecked(False)
 
         generate_btn = QPushButton("Generate")
+        generate_btn.setObjectName("primaryButton")
         generate_btn.clicked.connect(self._generate)
         self.copy_btn = QPushButton("Copy")
+        self.copy_btn.setObjectName("secondaryButton")
         self.copy_btn.clicked.connect(self._copy)
         close_btn = QPushButton("Close")
+        close_btn.setObjectName("secondaryButton")
         close_btn.clicked.connect(self.accept)
 
         self.output_text = QTextEdit()

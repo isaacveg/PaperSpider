@@ -64,11 +64,9 @@ class SettingsDialogTests(unittest.TestCase):
             dialog = SettingsDialog()
 
         self.assertEqual("PaperSpider - Settings", dialog.windowTitle())
-        self.assertGreaterEqual(dialog.minimumWidth(), 900)
-        self.assertGreaterEqual(dialog.minimumHeight(), 560)
+        self.assertEqual((640, 440), (dialog.minimumWidth(), dialog.minimumHeight()))
+        self.assertEqual((720, 520), (dialog.width(), dialog.height()))
         self.assertEqual([], dialog.findChildren(QGroupBox))
-        nav_labels = [button.text() for button in dialog.nav_buttons]
-        self.assertEqual(["General", "Appearance"], nav_labels)
         section_titles = {
             label.text()
             for label in dialog.findChildren(QLabel)
@@ -78,8 +76,21 @@ class SettingsDialogTests(unittest.TestCase):
         self.assertIn("Appearance", section_titles)
         self.assertFalse(hasattr(dialog, "base_dir_edit"))
         self.assertFalse(hasattr(dialog, "existing_list"))
-        self.assertTrue(dialog.windowFlags() & Qt.WindowType.FramelessWindowHint)
-        self.assertIsNotNone(dialog.title_bar)
+        self.assertFalse(dialog.windowFlags() & Qt.WindowType.FramelessWindowHint)
+        self.assertEqual([], dialog.findChildren(QWidget, "framelessTitleBar"))
+        self.assertFalse(hasattr(dialog, "title_bar"))
+        self.assertFalse(hasattr(dialog, "sidebar"))
+        self.assertFalse(hasattr(dialog, "nav_buttons"))
+
+    def test_settings_topic_cards_are_vertically_separated_with_internal_dividers(self) -> None:
+        with patch("paper_spider.ui.settings_dialog.QSettings", FakeSettings):
+            dialog = SettingsDialog()
+
+        cards = dialog.findChildren(QWidget, "settingsContentCard")
+
+        self.assertEqual(2, len(cards))
+        self.assertGreaterEqual(dialog.content_cards_layout.spacing(), 24)
+        self.assertEqual(1, len(dialog.appearance_card.findChildren(QWidget, "settingsFieldDivider")))
 
     def test_settings_exposes_appearance_theme_and_accent_color(self) -> None:
         SharedFakeSettings.values = {
@@ -97,6 +108,7 @@ class SettingsDialogTests(unittest.TestCase):
 
         self.assertEqual("Dark", SharedFakeSettings.values["appearance/theme"])
         self.assertEqual("Green", SharedFakeSettings.values["appearance/accent"])
+        self.assertIn("#7c3aed", dialog.styleSheet())
         dialog.save_btn.click()
 
         self.assertEqual("Light", SharedFakeSettings.values["appearance/theme"])
@@ -130,7 +142,6 @@ class SettingsDialogTests(unittest.TestCase):
         self.assertEqual("Save / Close", dialog.save_btn.text())
         self.assertEqual("ms", dialog.delay_unit_label.text())
         self.assertFalse(hasattr(dialog, "delay_unit_combo"))
-        self.assertEqual("settingsSidebar", dialog.sidebar.objectName())
         self.assertGreaterEqual(len(dialog.findChildren(QWidget, "settingsFieldRow")), 3)
 
 
@@ -155,7 +166,7 @@ class DatasetDialogTests(unittest.TestCase):
         ]
         self.assertEqual(["", "Conference", "Year", "Status", "Papers", "Actions"], headers)
         self.assertEqual("Search datasets...", dialog.search_edit.placeholderText())
-        self.assertTrue(dialog.windowFlags() & Qt.WindowType.FramelessWindowHint)
+        self.assertFalse(dialog.windowFlags() & Qt.WindowType.FramelessWindowHint)
         self.assertIsNotNone(dialog.title_bar)
 
     def test_existing_dataset_row_is_table_row_with_inline_actions(self) -> None:
@@ -305,6 +316,19 @@ class ExportDialogTests(unittest.TestCase):
         dialog.abstract_check.setChecked(True)
 
         self.assertEqual("Copy", copy_button.text())
+
+    def test_export_uses_shared_theme_roles_with_native_window_chrome(self) -> None:
+        dialog = ExportDialog(self.rows)
+        button_roles = {
+            button.text(): button.objectName()
+            for button in dialog.findChildren(QPushButton)
+        }
+
+        self.assertFalse(dialog.windowFlags() & Qt.WindowType.FramelessWindowHint)
+        self.assertTrue(dialog.styleSheet())
+        self.assertEqual("primaryButton", button_roles["Generate"])
+        self.assertEqual("secondaryButton", button_roles["Copy"])
+        self.assertEqual("secondaryButton", button_roles["Close"])
 
 
 if __name__ == "__main__":

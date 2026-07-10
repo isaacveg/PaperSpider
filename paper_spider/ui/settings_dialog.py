@@ -24,17 +24,15 @@ from PyQt6.QtWidgets import (
 )
 
 from .theme import ACCENTS, THEMES, appearance_from_values, build_stylesheet
-from .window_chrome import FramelessTitleBar, apply_window_chrome
 
 
 class SettingsDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("PaperSpider - Settings")
-        self.setMinimumSize(940, 600)
-        self.resize(1040, 680)
+        self.setMinimumSize(640, 440)
+        self.resize(720, 520)
         self._settings = QSettings("PaperSpider", "PaperSpider")
-        apply_window_chrome(self)
         self._build_ui()
         self._load_previous_state()
 
@@ -42,20 +40,11 @@ class SettingsDialog(QDialog):
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
-        self.title_bar = FramelessTitleBar(self, "PaperSpider - Settings", self)
-        root_layout.addWidget(self.title_bar)
-
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
-
-        self.sidebar = self._build_sidebar()
-        body.addWidget(self.sidebar)
 
         content_area = QFrame()
         content_area.setObjectName("settingsContentArea")
         content_layout = QVBoxLayout()
-        content_layout.setContentsMargins(20, 18, 28, 18)
+        content_layout.setContentsMargins(24, 20, 24, 20)
         content_layout.setSpacing(14)
 
         self.content_scroll = QScrollArea()
@@ -64,7 +53,7 @@ class SettingsDialog(QDialog):
         scroll_content = QWidget()
         self.content_cards_layout = QVBoxLayout()
         self.content_cards_layout.setContentsMargins(0, 0, 0, 0)
-        self.content_cards_layout.setSpacing(14)
+        self.content_cards_layout.setSpacing(24)
 
         self.delay_spin = QSpinBox()
         self.delay_spin.setRange(0, 10000)
@@ -73,7 +62,7 @@ class SettingsDialog(QDialog):
         self.delay_unit_label = QLabel("ms")
         self.delay_unit_label.setObjectName("settingsUnitLabel")
         self.delay_unit_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        request_card = self._settings_card(
+        self.request_card = self._settings_card(
             "Request Interval",
             self._field_group(
                 [
@@ -86,7 +75,7 @@ class SettingsDialog(QDialog):
             ),
             QStyle.StandardPixmap.SP_BrowserReload,
         )
-        self.content_cards_layout.addWidget(request_card)
+        self.content_cards_layout.addWidget(self.request_card)
 
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(THEMES)
@@ -94,7 +83,7 @@ class SettingsDialog(QDialog):
         self.accent_combo = QComboBox()
         self.accent_combo.addItems(ACCENTS.keys())
         self.accent_combo.currentTextChanged.connect(self._preview_theme)
-        appearance_card = self._settings_card(
+        self.appearance_card = self._settings_card(
             "Appearance",
             self._field_group(
                 [
@@ -112,46 +101,17 @@ class SettingsDialog(QDialog):
             ),
             QStyle.StandardPixmap.SP_DesktopIcon,
         )
-        self.content_cards_layout.addWidget(appearance_card)
+        self.content_cards_layout.addWidget(self.appearance_card)
         self.content_cards_layout.addStretch()
         scroll_content.setLayout(self.content_cards_layout)
         self.content_scroll.setWidget(scroll_content)
 
         content_layout.addWidget(self.content_scroll)
         content_area.setLayout(content_layout)
-        body.addWidget(content_area, stretch=1)
-        root_layout.addLayout(body, stretch=1)
+        root_layout.addWidget(content_area, stretch=1)
         root_layout.addWidget(self._build_footer())
 
         self.setLayout(root_layout)
-
-    def _build_sidebar(self) -> QFrame:
-        sidebar = QFrame()
-        sidebar.setObjectName("settingsSidebar")
-        sidebar.setFixedWidth(220)
-        layout = QVBoxLayout()
-        layout.setContentsMargins(20, 18, 12, 18)
-        layout.setSpacing(8)
-
-        self.nav_buttons = [
-            self._nav_button("General", active=True),
-            self._nav_button("Appearance", active=False),
-        ]
-        self.nav_buttons[0].clicked.connect(lambda: self._scroll_to_top())
-        self.nav_buttons[1].clicked.connect(lambda: self._scroll_to_appearance())
-        for button in self.nav_buttons:
-            layout.addWidget(button)
-        layout.addStretch()
-        sidebar.setLayout(layout)
-        return sidebar
-
-    def _nav_button(self, text: str, active: bool) -> QPushButton:
-        button = QPushButton(text)
-        button.setObjectName("settingsNavButton")
-        button.setCheckable(False)
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.setProperty("active", "true" if active else "false")
-        return button
 
     def _settings_card(self, title: str, body: QWidget, icon: QStyle.StandardPixmap) -> QFrame:
         card = QFrame()
@@ -184,7 +144,12 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        for row in rows:
+        for index, row in enumerate(rows):
+            if index:
+                divider = QFrame()
+                divider.setObjectName("settingsFieldDivider")
+                divider.setFrameShape(QFrame.Shape.HLine)
+                layout.addWidget(divider)
             layout.addWidget(row)
         group.setLayout(layout)
         return group
@@ -284,14 +249,6 @@ class SettingsDialog(QDialog):
         self._settings.setValue("appearance/theme", self.theme_combo.currentText())
         self._settings.setValue("appearance/accent", self.accent_combo.currentText())
         self.accept()
-
-    def _scroll_to_top(self) -> None:
-        self.content_scroll.verticalScrollBar().setValue(0)
-
-    def _scroll_to_appearance(self) -> None:
-        self.content_scroll.verticalScrollBar().setValue(
-            self.content_scroll.verticalScrollBar().maximum()
-        )
 
     def request_delay_ms(self) -> int:
         return self.delay_spin.value()

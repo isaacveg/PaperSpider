@@ -18,15 +18,6 @@ def is_macos() -> bool:
     return sys.platform == "darwin"
 
 
-def apply_window_chrome(widget: QWidget) -> None:
-    if not (widget.windowFlags() & Qt.WindowType.FramelessWindowHint):
-        widget.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
-    titlebar_hint = getattr(Qt.WindowType, "NoTitleBarBackgroundHint", None)
-    if titlebar_hint is not None and not (widget.windowFlags() & titlebar_hint):
-        widget.setWindowFlag(titlebar_hint, True)
-    widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-
-
 class WindowControls(QWidget):
     def __init__(self, window: QWidget, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)

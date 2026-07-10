@@ -227,7 +227,6 @@ class WorkspaceWindow(QMainWindow):
         self.summary_strip = SummaryStrip()
         self.top_bar = TopBar(
             self,
-            include_window_controls=True,
             summary_widget=self.summary_strip,
             search_widget=self.quick_filter_edit,
         )

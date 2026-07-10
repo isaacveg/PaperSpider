@@ -14,9 +14,6 @@ from PyQt6.QtCore import QRect, QSettings, Qt
 from PyQt6.QtGui import QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QWidget
 
-from .window_chrome import apply_window_chrome
-
-
 THEMES = ("Light", "Dark")
 ACCENTS = {
     "Blue": "#0b6bff",
@@ -465,6 +462,12 @@ def build_stylesheet(appearance: Appearance) -> str:
         border: 0;
         border-radius: 0;
     }}
+    QFrame#settingsFieldDivider {{
+        background: {appearance.border};
+        border: 0;
+        min-height: 1px;
+        max-height: 1px;
+    }}
     QWidget#settingsTextBlock, QWidget#settingsInlineControls {{
         background: transparent;
         border: 0;
@@ -634,6 +637,5 @@ def build_stylesheet(appearance: Appearance) -> str:
 
 def apply_theme(widget: QWidget, settings: QSettings | None = None) -> Appearance:
     appearance = load_appearance(settings or QSettings("PaperSpider", "PaperSpider"))
-    apply_window_chrome(widget)
     widget.setStyleSheet(build_stylesheet(appearance))
     return appearance

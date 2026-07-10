@@ -9,7 +9,6 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -23,7 +22,6 @@ from PyQt6.QtWidgets import (
 )
 
 from .workspace_view_helpers import WorkspaceSummary
-from .window_chrome import WindowControls, is_macos
 
 
 def _panel_frame() -> QFrame:
@@ -39,13 +37,10 @@ class TopBar(QWidget):
     def __init__(
         self,
         parent: Optional[QWidget] = None,
-        include_window_controls: bool = False,
         summary_widget: Optional[QWidget] = None,
         search_widget: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
-        self.window_controls: Optional[WindowControls] = None
-        self._drag_offset = None
         layout = QHBoxLayout()
         layout.setContentsMargins(8, 6, 8, 6)
 
@@ -61,10 +56,6 @@ class TopBar(QWidget):
         self.settings_btn.setObjectName("secondaryButton")
         self.settings_btn.clicked.connect(self.settings_clicked.emit)
 
-        if include_window_controls and is_macos():
-            self.window_controls = WindowControls(self.window(), self)
-            layout.addWidget(self.window_controls)
-            layout.addSpacing(10)
         layout.addWidget(self.app_label)
         layout.addSpacing(16)
         layout.addWidget(self.dataset_btn)
@@ -76,32 +67,10 @@ class TopBar(QWidget):
             layout.addWidget(summary_widget)
         layout.addStretch()
         layout.addWidget(self.settings_btn)
-        if include_window_controls and not is_macos():
-            self.window_controls = WindowControls(self.window(), self)
-            layout.addSpacing(8)
-            layout.addWidget(self.window_controls)
         self.setLayout(layout)
 
     def set_dataset(self, text: str) -> None:
         self.dataset_btn.setText(f"{text} \u25be")
-
-    def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_offset = event.globalPosition().toPoint() - self.window().frameGeometry().topLeft()
-            event.accept()
-            return
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
-            self.window().move(event.globalPosition().toPoint() - self._drag_offset)
-            event.accept()
-            return
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        self._drag_offset = None
-        super().mouseReleaseEvent(event)
 
 
 class SummaryStrip(QWidget):

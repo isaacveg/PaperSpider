@@ -9,7 +9,15 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QGuiApplication, QKeySequence
-from PyQt6.QtWidgets import QApplication, QFrame, QHeaderView, QPushButton, QScrollArea, QTableView
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QHeaderView,
+    QPushButton,
+    QScrollArea,
+    QTableView,
+    QWidget,
+)
 
 from paper_spider.storage import PaperStorage
 from paper_spider.ui.dataset_dialog import SelectionResult
@@ -104,11 +112,12 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.assertIs(self.window.table_stack.currentWidget(), self.window.empty_state)
         self.assertIn("Fetch", self.window.empty_state.title_label.text())
 
-    def test_workspace_window_uses_frameless_theme_aware_chrome(self) -> None:
-        self.assertTrue(
+    def test_workspace_window_uses_native_window_chrome(self) -> None:
+        self.assertFalse(
             self.window.windowFlags() & Qt.WindowType.FramelessWindowHint
         )
-        self.assertIsNotNone(self.window.top_bar.window_controls)
+        self.assertEqual([], self.window.top_bar.findChildren(QWidget, "windowControls"))
+        self.assertFalse(hasattr(self.window.top_bar, "window_controls"))
 
     def test_render_rows_keeps_artifact_actions_out_of_table(self) -> None:
         rows = self._rows()

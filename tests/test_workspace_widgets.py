@@ -5,9 +5,10 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QLabel, QLineEdit
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QLabel, QLineEdit, QWidget
 
-from paper_spider.ui.theme import Appearance, build_stylesheet
+from paper_spider.ui.theme import Appearance, apply_theme, build_stylesheet
 from paper_spider.ui.workspace_view_helpers import WorkspaceSummary
 from paper_spider.ui.workspace_widgets import CollapsibleLogPanel, DetailsPanel, SummaryStrip, TopBar
 
@@ -127,6 +128,15 @@ class WorkspaceWidgetsTests(unittest.TestCase):
         self.assertEqual("brandLabel", widget.app_label.objectName())
         self.assertEqual("datasetButton", widget.dataset_btn.objectName())
         self.assertEqual("secondaryButton", widget.settings_btn.objectName())
+        self.assertFalse(hasattr(widget, "window_controls"))
+
+    def test_apply_theme_styles_widgets_without_changing_native_window_flags(self) -> None:
+        widget = QWidget()
+
+        apply_theme(widget)
+
+        self.assertFalse(widget.windowFlags() & Qt.WindowType.FramelessWindowHint)
+        self.assertTrue(widget.styleSheet())
 
     def test_top_bar_owns_search_beside_summary_strip(self) -> None:
         search = QLineEdit()
