@@ -110,6 +110,10 @@ class WorkspaceWidgetsTests(unittest.TestCase):
         widget.append_log("Downloading PDFs...")
 
         self.assertIn("Downloading PDFs...", widget.log_view.toPlainText())
+        self.assertEqual("logToggleButton", widget.toggle_btn.objectName())
+        self.assertEqual(Qt.ArrowType.RightArrow, widget.toggle_btn.arrowType())
+        widget.toggle_btn.click()
+        self.assertEqual(Qt.ArrowType.DownArrow, widget.toggle_btn.arrowType())
 
     def test_top_bar_dataset_name_is_clickable(self) -> None:
         widget = TopBar()
@@ -187,6 +191,8 @@ class WorkspaceWidgetsTests(unittest.TestCase):
         self.assertIn("QComboBox::drop-down", stylesheet)
         self.assertIn("QComboBox::down-arrow", stylesheet)
         self.assertIn("QComboBox QAbstractItemView", stylesheet)
+        self.assertIn("combobox-popup: 0", stylesheet)
+        self.assertIn("QComboBoxPrivateContainer", stylesheet)
         self.assertIn("QScrollBar::up-arrow:vertical", stylesheet)
         self.assertIn("QScrollBar::down-arrow:vertical", stylesheet)
         self.assertIn("QScrollBar::add-page:vertical", stylesheet)
@@ -194,6 +200,12 @@ class WorkspaceWidgetsTests(unittest.TestCase):
         self.assertIn("QLineEdit#quickFilterEdit", stylesheet)
         self.assertIn("QComboBox#filterRoleCombo", stylesheet)
         self.assertIn("QWidget#minPreferredRow", stylesheet)
+        self.assertIn("QToolButton#logToggleButton", stylesheet)
+        fetched_style = stylesheet.split("QLabel#datasetStatusFetched", 1)[1].split(
+            "QLabel#datasetStatusUnfetched", 1
+        )[0]
+        self.assertIn("background: transparent", fetched_style)
+        self.assertIn("border: 0", fetched_style)
 
     def test_theme_preserves_native_checkbox_and_table_indicators(self) -> None:
         for theme in ("Light", "Dark"):

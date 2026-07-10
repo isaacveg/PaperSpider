@@ -7,12 +7,14 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
     QGroupBox,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSpinBox,
     QTableWidget,
@@ -76,7 +78,7 @@ class SettingsDialogTests(unittest.TestCase):
         self.assertIn("Appearance", section_titles)
         self.assertFalse(hasattr(dialog, "base_dir_edit"))
         self.assertFalse(hasattr(dialog, "existing_list"))
-        self.assertFalse(dialog.windowFlags() & Qt.WindowType.FramelessWindowHint)
+        self.assertTrue(dialog.windowFlags() & Qt.WindowType.FramelessWindowHint)
         self.assertEqual([], dialog.findChildren(QWidget, "framelessTitleBar"))
         self.assertFalse(hasattr(dialog, "title_bar"))
         self.assertNotIn("framelessTitleBar", dialog.styleSheet())
@@ -146,6 +148,15 @@ class SettingsDialogTests(unittest.TestCase):
         self.assertFalse(hasattr(dialog, "delay_unit_combo"))
         self.assertGreaterEqual(len(dialog.findChildren(QWidget, "settingsFieldRow")), 3)
 
+    def test_settings_escape_rejects_frameless_dialog(self) -> None:
+        with patch("paper_spider.ui.settings_dialog.QSettings", FakeSettings):
+            dialog = SettingsDialog()
+
+        dialog.show()
+        QTest.keyClick(dialog, Qt.Key.Key_Escape)
+
+        self.assertEqual(QDialog.DialogCode.Rejected.value, dialog.result())
+
 
 class DatasetDialogTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -168,17 +179,25 @@ class DatasetDialogTests(unittest.TestCase):
         ]
         self.assertEqual(["Conference", "Year", "Status", "Papers", "Actions"], headers)
         self.assertEqual("Search datasets...", dialog.search_edit.placeholderText())
-        self.assertFalse(dialog.windowFlags() & Qt.WindowType.FramelessWindowHint)
+        self.assertTrue(dialog.windowFlags() & Qt.WindowType.FramelessWindowHint)
         self.assertEqual([], dialog.findChildren(QWidget, "framelessTitleBar"))
         self.assertFalse(hasattr(dialog, "title_bar"))
+
+    def test_dataset_escape_rejects_frameless_dialog(self) -> None:
+        with patch("paper_spider.ui.dataset_dialog.QSettings", FakeSettings):
+            dialog = DatasetDialog()
+
+        dialog.show()
+        QTest.keyClick(dialog, Qt.Key.Key_Escape)
+
+        self.assertEqual(QDialog.DialogCode.Rejected.value, dialog.result())
 
     def test_existing_dataset_row_is_table_row_with_inline_actions(self) -> None:
         with patch("paper_spider.ui.dataset_dialog.QSettings", FakeSettings):
             dialog = DatasetDialog()
 
         row = dialog._add_table_row(
-            DatasetEntry("acl", 2025, "/tmp/acl/2025", is_existing=True, paper_count=1699),
-            editable=False,
+            DatasetEntry("acl", 2025, "/tmp/acl/2025", is_existing=True, paper_count=1699)
         )
 
         actions = dialog.dataset_table.cellWidget(row, 4)
@@ -199,6 +218,13 @@ class DatasetDialogTests(unittest.TestCase):
         self.assertEqual("1,699", dialog.dataset_table.item(row, 3).text())
         self.assertIn("Refresh", buttons)
         self.assertIn("x", buttons)
+        status_label = dialog.dataset_table.cellWidget(row, 2).findChild(QLabel)
+        refresh_button = next(
+            button for button in actions.findChildren(QPushButton) if button.text() == "Refresh"
+        )
+        self.assertLessEqual(status_label.maximumHeight(), 22)
+        self.assertEqual("datasetRefreshButton", refresh_button.objectName())
+        self.assertLessEqual(refresh_button.maximumHeight(), 24)
         self.assertEqual([], dialog.dataset_table.cellWidget(row, 0).findChildren(QComboBox) if dialog.dataset_table.cellWidget(row, 0) else [])
         self.assertNotIn("Delete", top_level_buttons)
 
@@ -207,10 +233,10 @@ class DatasetDialogTests(unittest.TestCase):
             dialog = DatasetDialog()
 
         dialog._add_table_row(
-            DatasetEntry("acl", 2025, "/tmp/acl/2025", True, 1), editable=False
+            DatasetEntry("acl", 2025, "/tmp/acl/2025", True, 1)
         )
         dialog._add_table_row(
-            DatasetEntry("nsdi", 2025, "/tmp/nsdi/2025", True, 1), editable=False
+            DatasetEntry("nsdi", 2025, "/tmp/nsdi/2025", True, 1)
         )
         dialog.dataset_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
         dialog.dataset_table.setCurrentCell(1, 0)
@@ -224,10 +250,10 @@ class DatasetDialogTests(unittest.TestCase):
         self.assertTrue(hasattr(dialog, "use_selected_btn"))
         self.assertFalse(dialog.use_selected_btn.isEnabled())
         fetched_row = dialog._add_table_row(
-            DatasetEntry("acl", 2025, "/tmp/acl/2025", True, 1), editable=False
+            DatasetEntry("acl", 2025, "/tmp/acl/2025", True, 1)
         )
         unfetched_row = dialog._add_table_row(
-            DatasetEntry("nsdi", 2025, None, False, 0), editable=True
+            DatasetEntry("nsdi", 2025, None, False, 0)
         )
 
         dialog.dataset_table.setCurrentCell(fetched_row, 0)
@@ -250,8 +276,7 @@ class DatasetDialogTests(unittest.TestCase):
 
         dialog.base_dir_edit.setText("/tmp")
         dialog._add_table_row(
-            DatasetEntry("acl", 2025, "/tmp/acl/2025", is_existing=True, paper_count=1),
-            editable=False,
+            DatasetEntry("acl", 2025, "/tmp/acl/2025", is_existing=True, paper_count=1)
         )
 
         dialog.dataset_table.cellDoubleClicked.emit(0, 0)
@@ -269,8 +294,7 @@ class DatasetDialogTests(unittest.TestCase):
 
         dialog.base_dir_edit.setText("/tmp")
         dialog._add_table_row(
-            DatasetEntry("acl", 2025, "/tmp/acl/2025", is_existing=True, paper_count=0),
-            editable=False,
+            DatasetEntry("acl", 2025, "/tmp/acl/2025", is_existing=True, paper_count=0)
         )
 
         dialog.dataset_table.cellDoubleClicked.emit(0, 0)
@@ -278,19 +302,21 @@ class DatasetDialogTests(unittest.TestCase):
         self.assertEqual(QDialog.DialogCode.Accepted.value, dialog.result())
         self.assertIsNotNone(dialog.selection())
 
-    def test_new_dataset_row_indicates_it_is_not_fetched_yet(self) -> None:
+    def test_add_dataset_opens_dedicated_inline_form_without_mutating_table(self) -> None:
         with patch("paper_spider.ui.dataset_dialog.QSettings", FakeSettings):
             dialog = DatasetDialog()
 
+        initial_rows = dialog.dataset_table.rowCount()
         dialog._add_entry()
 
-        row = dialog.dataset_table.rowCount() - 1
-        actions = dialog.dataset_table.cellWidget(row, 4)
-        self.assertIsNotNone(actions)
-        buttons = [button.text() for button in actions.findChildren(QPushButton)]
-        self.assertEqual("Unfetched", dialog.dataset_table.cellWidget(row, 2).findChild(QLabel).text())
-        self.assertIsInstance(dialog.dataset_table.cellWidget(row, 0), QComboBox)
-        self.assertIn("Fetch", buttons)
+        self.assertEqual(initial_rows, dialog.dataset_table.rowCount())
+        self.assertFalse(dialog.new_dataset_panel.isHidden())
+        self.assertIsInstance(dialog.new_conf_combo, QComboBox)
+        self.assertIsInstance(dialog.new_year_edit, QLineEdit)
+        self.assertEqual([], dialog.new_dataset_panel.findChildren(QSpinBox))
+        self.assertEqual("Fetch dataset", dialog.fetch_new_dataset_btn.text())
+        dialog.cancel_new_dataset_btn.click()
+        self.assertTrue(dialog.new_dataset_panel.isHidden())
 
     def test_fetch_button_returns_fetch_intent_for_selected_dataset(self) -> None:
         with patch("paper_spider.ui.dataset_dialog.QSettings", FakeSettings):
@@ -298,11 +324,9 @@ class DatasetDialogTests(unittest.TestCase):
 
         dialog.base_dir_edit.setText("/tmp")
         dialog._add_entry()
-        actions = dialog.dataset_table.cellWidget(0, 4)
-        self.assertIsNotNone(actions)
-        fetch_btn = next(button for button in actions.findChildren(QPushButton) if button.text() == "Fetch")
-
-        fetch_btn.click()
+        dialog.new_conf_combo.setCurrentIndex(0)
+        dialog.new_year_edit.setText("2025")
+        dialog.fetch_new_dataset_btn.click()
 
         self.assertEqual(QDialog.DialogCode.Accepted.value, dialog.result())
         selection = dialog.selection()
@@ -315,11 +339,10 @@ class DatasetDialogTests(unittest.TestCase):
 
         dialog.base_dir_edit.setText("/tmp")
         dialog._add_table_row(
-            DatasetEntry("acl", 2025, None, is_existing=False, paper_count=0),
-            editable=True,
+            DatasetEntry("acl", 2025, None, is_existing=False, paper_count=0)
         )
 
-        with patch("paper_spider.ui.dataset_dialog.QMessageBox.warning") as warning:
+        with patch("paper_spider.ui.dataset_dialog.show_warning") as warning:
             dialog.dataset_table.cellDoubleClicked.emit(0, 0)
 
         warning.assert_called_once()
@@ -330,8 +353,8 @@ class DatasetDialogTests(unittest.TestCase):
         with patch("paper_spider.ui.dataset_dialog.QSettings", FakeSettings):
             dialog = DatasetDialog()
 
-        dialog._add_table_row(DatasetEntry("acl", 2025, "/tmp/acl/2025", True, 1699), editable=False)
-        dialog._add_table_row(DatasetEntry("nsdi", 2025, "/tmp/nsdi/2025", True, 83), editable=False)
+        dialog._add_table_row(DatasetEntry("acl", 2025, "/tmp/acl/2025", True, 1699))
+        dialog._add_table_row(DatasetEntry("nsdi", 2025, "/tmp/nsdi/2025", True, 83))
 
         dialog.search_edit.setText("nsdi")
 
@@ -344,10 +367,10 @@ class DatasetDialogTests(unittest.TestCase):
 
         dialog.base_dir_edit.setText("/tmp")
         dialog._add_table_row(
-            DatasetEntry("acl", 2025, "/tmp/acl/2025", True, 1), editable=False
+            DatasetEntry("acl", 2025, "/tmp/acl/2025", True, 1)
         )
         dialog._add_table_row(
-            DatasetEntry("nsdi", 2025, "/tmp/nsdi/2025", True, 1), editable=False
+            DatasetEntry("nsdi", 2025, "/tmp/nsdi/2025", True, 1)
         )
         dialog.dataset_table.setCurrentCell(0, 0)
 

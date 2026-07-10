@@ -16,12 +16,12 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QTextEdit,
 )
 
 from ..export_utils import build_export_text
+from .dialog_utils import show_warning
 from .theme import apply_theme
 
 
@@ -110,7 +110,7 @@ class ExportDialog(QDialog):
                 include_abstract=self.abstract_check.isChecked(),
             )
         except ValueError as exc:
-            QMessageBox.warning(self, "Invalid export options", str(exc))
+            show_warning(self, "Invalid export options", str(exc))
             return
         self.output_text.setPlainText(content)
 

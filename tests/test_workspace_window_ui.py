@@ -149,6 +149,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.assertLessEqual(self.window.width(), 1100)
         self.assertTrue(self.window.workspace_splitter.isCollapsible(0))
         self.assertTrue(self.window.workspace_splitter.isCollapsible(2))
+        self.assertLessEqual(self.window.workspace_splitter.handleWidth(), 1)
         splitter_sizes = self.window.workspace_splitter.sizes()
         self.assertGreaterEqual(
             splitter_sizes[0], self.window.filter_panel.minimumWidth()
@@ -178,16 +179,17 @@ class WorkspaceWindowUiTests(unittest.TestCase):
             self.window.filter_rows[0].mode_combo.minimumSizeHint().width(),
         )
 
-        action_bounds = self.window.download_action_group.contentsRect()
+        action_bounds = self.window.action_bar.contentsRect()
         for button in (
+            self.window.invert_btn,
             self.window.abstract_btn,
             self.window.pdf_btn,
             self.window.bib_btn,
             self.window.export_btn,
         ):
-            top_left = button.mapTo(self.window.download_action_group, button.rect().topLeft())
+            top_left = button.mapTo(self.window.action_bar, button.rect().topLeft())
             bottom_right = button.mapTo(
-                self.window.download_action_group, button.rect().bottomRight()
+                self.window.action_bar, button.rect().bottomRight()
             )
             self.assertGreaterEqual(top_left.x(), action_bounds.left())
             self.assertGreaterEqual(top_left.y(), action_bounds.top())
@@ -298,25 +300,18 @@ class WorkspaceWindowUiTests(unittest.TestCase):
             self.window.quick_filter_shortcut.key().matches(QKeySequence.StandardKey.Find),
         )
 
-    def test_select_and_download_controls_use_separate_action_rows(self) -> None:
+    def test_select_and_download_controls_share_one_action_row(self) -> None:
         summary_buttons = self.window.summary_strip.findChildren(QPushButton)
 
         self.assertEqual([], summary_buttons)
-        self.assertIs(self.window.invert_btn.parent(), self.window.selection_controls)
-        self.assertEqual(
-            ["Invert"],
-            [button.text() for button in self.window.selection_controls.findChildren(QPushButton)],
-        )
-        self.assertTrue(hasattr(self.window, "selection_action_group"))
-        self.assertTrue(hasattr(self.window, "download_action_group"))
-        self.assertIs(
-            self.window.selection_controls.parentWidget(),
-            self.window.selection_action_group,
-        )
+        self.assertEqual("workspaceActionBar", self.window.action_bar.objectName())
+        self.assertFalse(hasattr(self.window, "selection_action_group"))
+        self.assertFalse(hasattr(self.window, "download_action_group"))
         self.assertTrue(
             all(
-                button.parentWidget() is self.window.download_action_group
+                button.parentWidget() is self.window.action_bar
                 for button in (
+                    self.window.invert_btn,
                     self.window.abstract_btn,
                     self.window.pdf_btn,
                     self.window.bib_btn,
@@ -325,8 +320,8 @@ class WorkspaceWindowUiTests(unittest.TestCase):
             )
         )
         self.assertLess(
-            self.window.action_layout.indexOf(self.window.selection_action_group),
-            self.window.action_layout.indexOf(self.window.download_action_group),
+            self.window.action_layout.indexOf(self.window.invert_btn),
+            self.window.action_layout.indexOf(self.window.abstract_btn),
         )
 
     def test_select_header_toggles_visible_selection(self) -> None:
@@ -361,7 +356,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         )
         self.assertEqual("primaryButton", self.window.pdf_btn.objectName())
         self.assertEqual("primaryButton", self.window.export_btn.objectName())
-        self.assertNotIn("#edf2f7", self.window.selection_controls.styleSheet().lower())
+        self.assertNotIn("#edf2f7", self.window.action_bar.styleSheet().lower())
 
     def test_dataset_dialog_fetch_intent_uses_existing_fetch_flow(self) -> None:
         calls: list[str] = []
@@ -436,7 +431,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.assertNotIn("#ffffff", self.window.filter_rows[0].styleSheet().lower())
         self.assertNotIn("#f7f8fa", self.window.findChild(QFrame, "filterSidebar").styleSheet().lower())
         self.assertNotIn("#fbfcfd", self.window.details_panel.styleSheet().lower())
-        self.assertNotIn("#edf2f7", self.window.selection_controls.styleSheet().lower())
+        self.assertNotIn("#edf2f7", self.window.action_bar.styleSheet().lower())
         self.assertIn("#1f2937", build_stylesheet(dark).lower())
 
     def test_filter_row_reads_as_a_compact_sentence(self) -> None:
@@ -453,6 +448,8 @@ class WorkspaceWindowUiTests(unittest.TestCase):
             criteria_layout.indexOf(row.field_combo),
             criteria_layout.indexOf(row.mode_combo),
         )
+        self.assertEqual(row.field_combo.geometry().y(), row.mode_combo.geometry().y())
+        self.assertLessEqual(row.role_combo.maximumWidth(), 104)
         self.assertIs(row.layout().itemAt(2).widget(), row.text_row)
 
     def test_filter_row_preserves_full_mode_label_at_300_pixels(self) -> None:
@@ -472,7 +469,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
                 self.assertEqual(300, row.width())
                 self.assertEqual("Any field", row.field_combo.currentText())
                 self.assertEqual("does not contain", row.mode_combo.currentText())
-                for combo in (row.field_combo, row.mode_combo):
+                for combo in (row.role_combo, row.field_combo, row.mode_combo):
                     self.assertGreaterEqual(
                         combo.width(), required_combo_text_width(combo)
                     )
@@ -714,7 +711,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
             ],
         )
 
-        with patch("paper_spider.ui.workspace_window.QMessageBox.information"):
+        with patch("paper_spider.ui.workspace_window.show_information"):
             self.window._on_pdfs_done(result)
 
         self.assertEqual({"p2"}, self.window.paper_model.selected_ids())

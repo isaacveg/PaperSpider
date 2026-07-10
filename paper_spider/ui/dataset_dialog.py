@@ -11,23 +11,25 @@ import shutil
 import sqlite3
 import time
 from dataclasses import dataclass
+from datetime import date
 from typing import List, Optional
 
 from PyQt6.QtCore import Qt, QSettings
+from PyQt6.QtGui import QIntValidator
 from PyQt6.QtWidgets import (
     QComboBox,
     QAbstractItemView,
     QDialog,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QHeaderView,
-    QSpinBox,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -35,6 +37,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..conferences import available_conferences
+from .dialog_utils import ask_confirmation, configure_utility_dialog, show_warning
 from .theme import apply_theme
 
 YEAR_MIN = 1980
@@ -62,6 +65,7 @@ class DatasetEntry:
 class DatasetDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        configure_utility_dialog(self)
         self.setWindowTitle("Datasets")
         self.setMinimumWidth(980)
         self.resize(1120, 700)
@@ -100,12 +104,14 @@ class DatasetDialog(QDialog):
         datasets_group = QGroupBox("Datasets")
         datasets_layout = QVBoxLayout()
         toolbar_layout = QHBoxLayout()
-        add_btn = QPushButton("+ Add Dataset")
-        add_btn.clicked.connect(self._add_entry)
-        toolbar_layout.addWidget(add_btn)
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.clicked.connect(lambda: self._refresh_existing(self.base_dir_edit.text().strip()))
-        toolbar_layout.addWidget(refresh_btn)
+        self.add_dataset_btn = QPushButton("+ Add Dataset")
+        self.add_dataset_btn.clicked.connect(self._add_entry)
+        toolbar_layout.addWidget(self.add_dataset_btn)
+        self.refresh_datasets_btn = QPushButton("Refresh")
+        self.refresh_datasets_btn.clicked.connect(
+            lambda: self._refresh_existing(self.base_dir_edit.text().strip())
+        )
+        toolbar_layout.addWidget(self.refresh_datasets_btn)
         toolbar_layout.addStretch()
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Search datasets...")
@@ -114,6 +120,38 @@ class DatasetDialog(QDialog):
         self.search_edit.textChanged.connect(self._apply_search)
         toolbar_layout.addWidget(self.search_edit)
         datasets_layout.addLayout(toolbar_layout)
+
+        self.new_dataset_panel = QFrame()
+        self.new_dataset_panel.setObjectName("newDatasetPanel")
+        new_dataset_layout = QHBoxLayout()
+        new_dataset_layout.setContentsMargins(12, 10, 12, 10)
+        new_dataset_layout.setSpacing(8)
+        new_dataset_label = QLabel("New dataset")
+        new_dataset_label.setObjectName("newDatasetLabel")
+        self.new_conf_combo = QComboBox()
+        self.new_conf_combo.setObjectName("newDatasetConference")
+        for conf in self._conferences:
+            self.new_conf_combo.addItem(conf.name, conf.slug)
+        self.new_year_edit = QLineEdit(str(date.today().year))
+        self.new_year_edit.setObjectName("newDatasetYear")
+        self.new_year_edit.setValidator(QIntValidator(YEAR_MIN, YEAR_MAX, self))
+        self.new_year_edit.setMaximumWidth(96)
+        self.new_year_edit.setPlaceholderText("Year")
+        self.cancel_new_dataset_btn = QPushButton("Cancel")
+        self.cancel_new_dataset_btn.setObjectName("secondaryButton")
+        self.cancel_new_dataset_btn.clicked.connect(self._cancel_new_dataset)
+        self.fetch_new_dataset_btn = QPushButton("Fetch dataset")
+        self.fetch_new_dataset_btn.setObjectName("primaryButton")
+        self.fetch_new_dataset_btn.clicked.connect(self._fetch_new_dataset)
+        new_dataset_layout.addWidget(new_dataset_label)
+        new_dataset_layout.addWidget(self.new_conf_combo, stretch=1)
+        new_dataset_layout.addWidget(self.new_year_edit)
+        new_dataset_layout.addStretch()
+        new_dataset_layout.addWidget(self.cancel_new_dataset_btn)
+        new_dataset_layout.addWidget(self.fetch_new_dataset_btn)
+        self.new_dataset_panel.setLayout(new_dataset_layout)
+        self.new_dataset_panel.setVisible(False)
+        datasets_layout.addWidget(self.new_dataset_panel)
 
         self.dataset_table = QTableWidget(0, 5)
         self.dataset_table.setHorizontalHeaderLabels(
@@ -182,37 +220,23 @@ class DatasetDialog(QDialog):
             return
         datasets = self._scan_datasets(base_dir)
         for entry in datasets:
-            self._add_table_row(entry, editable=False, focus=False)
+            self._add_table_row(entry, focus=False)
         if self.dataset_table.rowCount() > 0:
             self.dataset_table.setCurrentCell(0, 0)
         self._apply_search()
 
-    def _add_table_row(self, entry: DatasetEntry, editable: bool, focus: bool = True) -> int:
+    def _add_table_row(self, entry: DatasetEntry, focus: bool = True) -> int:
         row = self.dataset_table.rowCount()
         self.dataset_table.insertRow(row)
         self._entries.insert(row, entry)
 
-        if editable:
-            conf_combo = QComboBox()
-            for conf in self._conferences:
-                conf_combo.addItem(conf.name, conf.slug)
-            index = conf_combo.findData(entry.conf_slug)
-            if index >= 0:
-                conf_combo.setCurrentIndex(index)
-            self.dataset_table.setCellWidget(row, 0, conf_combo)
-
-            year_spin = QSpinBox()
-            year_spin.setRange(YEAR_MIN, YEAR_MAX)
-            year_spin.setValue(max(min(entry.year, YEAR_MAX), YEAR_MIN))
-            self.dataset_table.setCellWidget(row, 1, year_spin)
-        else:
-            conf_item = QTableWidgetItem(self._conference_name(entry.conf_slug))
-            conf_item.setData(Qt.ItemDataRole.UserRole, entry)
-            conf_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            self.dataset_table.setItem(row, 0, conf_item)
-            year_item = QTableWidgetItem(str(entry.year))
-            year_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            self.dataset_table.setItem(row, 1, year_item)
+        conf_item = QTableWidgetItem(self._conference_name(entry.conf_slug))
+        conf_item.setData(Qt.ItemDataRole.UserRole, entry)
+        conf_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        self.dataset_table.setItem(row, 0, conf_item)
+        year_item = QTableWidgetItem(str(entry.year))
+        year_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        self.dataset_table.setItem(row, 1, year_item)
 
         status_container = QWidget()
         status_layout = QHBoxLayout()
@@ -221,8 +245,7 @@ class DatasetDialog(QDialog):
         status_label = QLabel("Fetched" if entry.is_existing else "Unfetched")
         status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         status_label.setObjectName("datasetStatusFetched" if entry.is_existing else "datasetStatusUnfetched")
-        status_label.setMinimumWidth(86)
-        status_label.setMaximumHeight(26)
+        status_label.setMaximumHeight(22)
         status_layout.addWidget(status_label)
         status_container.setLayout(status_layout)
         self.dataset_table.setCellWidget(row, 2, status_container)
@@ -237,7 +260,11 @@ class DatasetDialog(QDialog):
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.setSpacing(6)
         fetch_btn = QPushButton("Refresh" if entry.is_existing else "Fetch")
-        if not entry.is_existing:
+        fetch_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        fetch_btn.setFixedHeight(24)
+        if entry.is_existing:
+            fetch_btn.setObjectName("datasetRefreshButton")
+        else:
             fetch_btn.setObjectName("primaryButton")
         fetch_btn.clicked.connect(lambda _checked=False, widget=actions: self._fetch_action(widget))
         delete_btn = QPushButton("x")
@@ -249,7 +276,7 @@ class DatasetDialog(QDialog):
         actions.setLayout(actions_layout)
         self.dataset_table.setCellWidget(row, 4, actions)
 
-        self.dataset_table.setRowHeight(row, 42)
+        self.dataset_table.setRowHeight(row, 36)
         if focus:
             self.dataset_table.setCurrentCell(row, 0)
         else:
@@ -257,17 +284,31 @@ class DatasetDialog(QDialog):
         return row
 
     def _add_entry(self) -> None:
-        conf_slug = self._conferences[0].slug if self._conferences else "unknown"
-        year = 2024
-        entry = DatasetEntry(
-            conf_slug=conf_slug,
-            year=year,
-            path=None,
-            is_existing=False,
-            paper_count=0,
-        )
-        self._add_table_row(entry, editable=True)
-        self._apply_search()
+        self.new_dataset_panel.setVisible(True)
+        self.new_conf_combo.setFocus()
+
+    def _cancel_new_dataset(self) -> None:
+        self.new_dataset_panel.setVisible(False)
+
+    def _fetch_new_dataset(self) -> None:
+        conf_slug = self.new_conf_combo.currentData()
+        year_text = self.new_year_edit.text().strip()
+        if conf_slug is None:
+            show_warning(self, "Missing", "Please choose a conference.")
+            return
+        try:
+            year = int(year_text)
+        except ValueError:
+            show_warning(self, "Invalid year", "Enter a four-digit conference year.")
+            return
+        if not YEAR_MIN <= year <= YEAR_MAX:
+            show_warning(
+                self,
+                "Invalid year",
+                f"Year must be between {YEAR_MIN} and {YEAR_MAX}.",
+            )
+            return
+        self._select_dataset(str(conf_slug), year, fetch_after_select=True)
 
     def _delete_selected(self) -> None:
         row = self._selected_row()
@@ -280,12 +321,9 @@ class DatasetDialog(QDialog):
             return
         entry = self._entries[row]
         if entry and entry.is_existing and entry.path:
-            confirm = QMessageBox.question(
-                self,
-                "Delete",
-                "This will move the dataset folder to .trash. Continue?",
-            )
-            if confirm != QMessageBox.StandardButton.Yes:
+            if not ask_confirmation(
+                self, "Delete", "This will move the dataset folder to .trash. Continue?"
+            ):
                 return
             if not self._move_to_trash(entry.path):
                 return
@@ -310,7 +348,7 @@ class DatasetDialog(QDialog):
         try:
             shutil.move(path, dest)
         except (OSError, shutil.Error):
-            QMessageBox.warning(self, "Error", "Failed to move dataset to .trash")
+            show_warning(self, "Error", "Failed to move dataset to .trash")
             return False
         return True
 
@@ -367,7 +405,7 @@ class DatasetDialog(QDialog):
 
     def _use_row(self, row: int, _column: int = 0) -> None:
         if not self._row_is_fetched(row):
-            QMessageBox.warning(
+            show_warning(
                 self,
                 "Fetch required",
                 "Please fetch this dataset before using it.",
@@ -387,9 +425,14 @@ class DatasetDialog(QDialog):
         if row < 0 or row >= self.dataset_table.rowCount():
             return
         conf_slug, year = self._row_selection(row)
+        self._select_dataset(conf_slug, year, fetch_after_select)
+
+    def _select_dataset(
+        self, conf_slug: str, year: int, fetch_after_select: bool
+    ) -> None:
         base_dir = self.base_dir_edit.text().strip()
         if not base_dir:
-            QMessageBox.warning(self, "Missing", "Please choose a base folder first.")
+            show_warning(self, "Missing", "Please choose a base folder first.")
             return
         self._result = SelectionResult(
             base_dir=base_dir,
@@ -401,10 +444,6 @@ class DatasetDialog(QDialog):
         self.accept()
 
     def _row_selection(self, row: int) -> tuple[str, int]:
-        conf_widget = self.dataset_table.cellWidget(row, 0)
-        year_widget = self.dataset_table.cellWidget(row, 1)
-        if isinstance(conf_widget, QComboBox) and isinstance(year_widget, QSpinBox):
-            return str(conf_widget.currentData()), int(year_widget.value())
         entry = self._entries[row]
         return entry.conf_slug, entry.year
 

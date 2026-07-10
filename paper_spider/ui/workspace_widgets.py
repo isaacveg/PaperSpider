@@ -302,7 +302,10 @@ class CollapsibleLogPanel(QWidget):
 
         header = QHBoxLayout()
         self.toggle_btn = QToolButton()
+        self.toggle_btn.setObjectName("logToggleButton")
         self.toggle_btn.setText("Show log")
+        self.toggle_btn.setArrowType(Qt.ArrowType.RightArrow)
+        self.toggle_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.toggle_btn.setCheckable(True)
         self.toggle_btn.toggled.connect(self._set_log_visible)
         self.status_label = QLabel("Ready")
@@ -366,3 +369,6 @@ class CollapsibleLogPanel(QWidget):
     def _set_log_visible(self, visible: bool) -> None:
         self.log_view.setVisible(visible)
         self.toggle_btn.setText("Hide log" if visible else "Show log")
+        self.toggle_btn.setArrowType(
+            Qt.ArrowType.DownArrow if visible else Qt.ArrowType.RightArrow
+        )

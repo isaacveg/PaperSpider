@@ -31,7 +31,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -50,6 +49,7 @@ from ..filtering import FilterConfig
 from ..storage import PaperStorage
 from ..workspace_service import DownloadBatchResult, PaperLoadResult, WorkspaceService
 from .dataset_dialog import DatasetDialog
+from .dialog_utils import show_error, show_information, show_warning
 from .export_dialog import ExportDialog
 from .paper_table_model import PaperTableModel
 from .settings_dialog import SettingsDialog
@@ -85,12 +85,14 @@ class FilterRow(QFrame):
             ("Keywords", "keywords"),
         ):
             self.field_combo.addItem(label, value)
-        self.field_combo.setMinimumWidth(92)
+        self.field_combo.setObjectName("filterFieldCombo")
+        self.field_combo.setMinimumWidth(112)
         self.field_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("contains", "contains")
         self.mode_combo.addItem("does not contain", "not_contains")
+        self.mode_combo.setObjectName("filterModeCombo")
         self.mode_combo.setMinimumWidth(116)
         self.mode_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
@@ -102,8 +104,7 @@ class FilterRow(QFrame):
         ):
             self.role_combo.addItem(label, value)
         self.role_combo.setObjectName("filterRoleCombo")
-        self.role_combo.setMinimumWidth(100)
-        self.role_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.role_combo.setFixedWidth(104)
         role_value = {
             "include": "must",
             "prefer": "should",
@@ -139,11 +140,11 @@ class FilterRow(QFrame):
         self.sentence_row.setLayout(sentence_layout)
 
         self.criteria_row = QWidget()
-        criteria_layout = QVBoxLayout()
+        criteria_layout = QHBoxLayout()
         criteria_layout.setContentsMargins(0, 0, 0, 0)
         criteria_layout.setSpacing(4)
-        criteria_layout.addWidget(self.field_combo)
-        criteria_layout.addWidget(self.mode_combo)
+        criteria_layout.addWidget(self.field_combo, stretch=2)
+        criteria_layout.addWidget(self.mode_combo, stretch=3)
         self.criteria_row.setLayout(criteria_layout)
 
         self.text_row = QWidget()
@@ -376,19 +377,14 @@ class WorkspaceWindow(QMainWindow):
         self.table_stack.addWidget(self.empty_state)
         self.table_stack.addWidget(self.table)
 
-        self.action_layout = QVBoxLayout()
+        self.action_bar = QWidget()
+        self.action_bar.setObjectName("workspaceActionBar")
+        self.action_layout = QHBoxLayout()
         self.action_layout.setContentsMargins(0, 0, 0, 0)
         self.action_layout.setSpacing(4)
-        self.selection_controls = QWidget()
-        self.selection_controls.setObjectName("selectionControls")
-        selection_layout = QHBoxLayout()
-        selection_layout.setContentsMargins(0, 0, 0, 0)
-        selection_layout.setSpacing(4)
         self.invert_btn = QPushButton("Invert")
         self.invert_btn.setObjectName("secondaryButton")
         self.invert_btn.clicked.connect(self._invert_selection)
-        selection_layout.addWidget(self.invert_btn)
-        self.selection_controls.setLayout(selection_layout)
         self.abstract_btn = QPushButton("Download abstracts")
         self.abstract_btn.setObjectName("secondaryButton")
         self.abstract_btn.clicked.connect(self._download_abstracts)
@@ -402,32 +398,19 @@ class WorkspaceWindow(QMainWindow):
         self.export_btn.setObjectName("primaryButton")
         self.export_btn.clicked.connect(self._open_export_dialog)
 
-        self.selection_action_group = QWidget()
-        selection_action_layout = QHBoxLayout()
-        selection_action_layout.setContentsMargins(0, 0, 0, 0)
-        selection_action_layout.addWidget(self.selection_controls)
-        selection_action_layout.addStretch()
-        self.selection_action_group.setLayout(selection_action_layout)
-
-        self.download_action_group = QWidget()
-        download_action_layout = QHBoxLayout()
-        download_action_layout.setContentsMargins(0, 0, 0, 0)
-        download_action_layout.setSpacing(4)
-        download_action_layout.addWidget(self.abstract_btn)
-        download_action_layout.addWidget(self.pdf_btn)
-        download_action_layout.addWidget(self.bib_btn)
-        download_action_layout.addWidget(self.export_btn)
-        download_action_layout.addStretch()
-        self.download_action_group.setLayout(download_action_layout)
-
-        self.action_layout.addWidget(self.selection_action_group)
-        self.action_layout.addWidget(self.download_action_group)
+        self.action_layout.addWidget(self.invert_btn)
+        self.action_layout.addStretch(1)
+        self.action_layout.addWidget(self.abstract_btn)
+        self.action_layout.addWidget(self.pdf_btn)
+        self.action_layout.addWidget(self.bib_btn)
+        self.action_layout.addWidget(self.export_btn)
+        self.action_bar.setLayout(self.action_layout)
 
         center_panel = QWidget()
         center_layout = QVBoxLayout()
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.addWidget(self.table_stack, stretch=1)
-        center_layout.addLayout(self.action_layout)
+        center_layout.addWidget(self.action_bar)
         center_panel.setLayout(center_layout)
 
         self.details_panel = DetailsPanel()
@@ -439,7 +422,7 @@ class WorkspaceWindow(QMainWindow):
         self.details_panel.reveal_bib_clicked.connect(self._reveal_current_bib)
 
         self.workspace_splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.workspace_splitter.setHandleWidth(8)
+        self.workspace_splitter.setHandleWidth(1)
         self.workspace_splitter.addWidget(self.filter_panel)
         self.workspace_splitter.addWidget(center_panel)
         self.workspace_splitter.addWidget(self.details_panel)
@@ -681,7 +664,7 @@ class WorkspaceWindow(QMainWindow):
     def _ensure_ready(self) -> bool:
         if self.storage and self.conf:
             return True
-        QMessageBox.warning(self, "Missing", "Please choose a dataset first.")
+        show_warning(self, "Missing", "Please choose a dataset first.")
         return False
 
     def _start_worker(self, fn, on_done, on_error, *args) -> None:
@@ -724,7 +707,7 @@ class WorkspaceWindow(QMainWindow):
             return
         conf = self.available_conf_map.get(selection.conf_slug)
         if not conf:
-            QMessageBox.warning(self, "Error", "Conference not available")
+            show_warning(self, "Error", "Conference not available")
             return
         conf.request_delay = selection.request_delay_ms / 1000.0
         self.conf = conf
@@ -759,7 +742,7 @@ class WorkspaceWindow(QMainWindow):
 
     def _on_fetch_done(self, count: int) -> None:
         self._log(f"Loaded {count} papers")
-        QMessageBox.information(self, "Done", f"Loaded {count} papers")
+        show_information(self, "Done", f"Loaded {count} papers")
         self._set_rows_loading(False)
         self._refresh_status()
         self._load_papers(force_refresh=True)
@@ -959,7 +942,7 @@ class WorkspaceWindow(QMainWindow):
 
     def _on_load_papers_error(self, message: str) -> None:
         self._set_rows_loading(False)
-        QMessageBox.critical(self, "Error", message)
+        show_error(self, "Error", message)
         self._log(f"Error: {message}")
         self._finish_pending_row_load()
 
@@ -1009,14 +992,14 @@ class WorkspaceWindow(QMainWindow):
     def _open_export_dialog(self) -> None:
         selected = self._selected_rows()
         if not selected:
-            QMessageBox.information(self, "Select", "Please select papers first.")
+            show_information(self, "Select", "Please select papers first.")
             return
         dialog = ExportDialog(selected, self)
         dialog.exec()
 
     def _download_abstracts(self) -> None:
         if self.abstract_cancel_token:
-            QMessageBox.information(
+            show_information(
                 self,
                 "Busy",
                 "Abstract download already running. Use the cancel control in the status bar.",
@@ -1026,7 +1009,7 @@ class WorkspaceWindow(QMainWindow):
             return
         selected = self._selected_rows()
         if not selected:
-            QMessageBox.information(self, "Select", "Please select papers first.")
+            show_information(self, "Select", "Please select papers first.")
             return
         self._download_abstracts_for_rows(selected)
 
@@ -1034,7 +1017,7 @@ class WorkspaceWindow(QMainWindow):
         if not self._ensure_ready():
             return
         if self.abstract_cancel_token:
-            QMessageBox.information(self, "Busy", "Abstract download already running.")
+            show_information(self, "Busy", "Abstract download already running.")
             return
         self.abstract_cancel_token = CancelToken()
         self._refresh_download_controls()
@@ -1072,7 +1055,7 @@ class WorkspaceWindow(QMainWindow):
 
     def _download_pdfs(self) -> None:
         if self.pdf_cancel_token:
-            QMessageBox.information(
+            show_information(
                 self,
                 "Busy",
                 "PDF download already running. Use the cancel control in the status bar.",
@@ -1082,7 +1065,7 @@ class WorkspaceWindow(QMainWindow):
             return
         selected = self._selected_rows()
         if not selected:
-            QMessageBox.information(self, "Select", "Please select papers first.")
+            show_information(self, "Select", "Please select papers first.")
             return
         self._download_pdfs_for_rows(selected)
 
@@ -1090,7 +1073,7 @@ class WorkspaceWindow(QMainWindow):
         if not self._ensure_ready():
             return
         if self.pdf_cancel_token:
-            QMessageBox.information(self, "Busy", "PDF download already running.")
+            show_information(self, "Busy", "PDF download already running.")
             return
         self.pdf_cancel_token = CancelToken()
         self._refresh_download_controls()
@@ -1131,7 +1114,7 @@ class WorkspaceWindow(QMainWindow):
             return
         selected = self._selected_rows()
         if not selected:
-            QMessageBox.information(self, "Select", "Please select papers first.")
+            show_information(self, "Select", "Please select papers first.")
             return
         self._export_bibtex_for_rows(selected)
 
@@ -1154,7 +1137,7 @@ class WorkspaceWindow(QMainWindow):
 
     def _on_bibtex_done(self, count: int) -> None:
         self._refresh_download_controls()
-        QMessageBox.information(self, "Done", f"Exported {count} bibtex files")
+        show_information(self, "Done", f"Exported {count} bibtex files")
         self._load_papers(force_refresh=True)
 
     def _apply_download_updates(self, updated_rows: List[dict]) -> None:
@@ -1203,24 +1186,24 @@ class WorkspaceWindow(QMainWindow):
             parts.append(f"Failed {len(result.failures)}")
             for failure in result.failures[:5]:
                 self._log(f"Failed {artifact_name}: {failure.title} ({failure.message})")
-        QMessageBox.information(self, title, "\n".join(parts))
+        show_information(self, title, "\n".join(parts))
 
     def _on_worker_error(self, message: str) -> None:
         self._set_rows_loading(False)
         self._refresh_download_controls("Error")
-        QMessageBox.critical(self, "Error", message)
+        show_error(self, "Error", message)
         self._log(f"Error: {message}")
 
     def _on_abstracts_error(self, message: str) -> None:
         if self.abstract_cancel_token:
             self.abstract_cancel_token = None
         self._refresh_download_controls("Error")
-        QMessageBox.critical(self, "Error", message)
+        show_error(self, "Error", message)
         self._log(f"Error: {message}")
 
     def _on_pdfs_error(self, message: str) -> None:
         if self.pdf_cancel_token:
             self.pdf_cancel_token = None
         self._refresh_download_controls("Error")
-        QMessageBox.critical(self, "Error", message)
+        show_error(self, "Error", message)
         self._log(f"Error: {message}")

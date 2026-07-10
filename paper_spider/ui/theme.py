@@ -107,6 +107,8 @@ def build_stylesheet(appearance: Appearance) -> str:
     disabled_border = "#2b3748" if dark else "#d8e0e8"
     scrollbar_handle = "#64748b" if dark else "#cbd5e1"
     scrollbar_hover = "#94a3b8" if dark else "#94a3b8"
+    status_fetched = "#86efac" if dark else "#15803d"
+    status_unfetched = "#fcd34d" if dark else "#92400e"
     arrow_icon = (
         Path(__file__).with_name("assets") / ("chevron-down-dark.svg" if dark else "chevron-down-light.svg")
     ).as_posix()
@@ -158,6 +160,7 @@ def build_stylesheet(appearance: Appearance) -> str:
         min-height: 24px;
     }}
     QComboBox {{
+        combobox-popup: 0;
         padding-right: 30px;
     }}
     QComboBox::drop-down {{
@@ -184,7 +187,13 @@ def build_stylesheet(appearance: Appearance) -> str:
     }}
     QComboBox#filterRoleCombo {{
         color: {appearance.accent_color};
+        font-size: 12px;
         font-weight: 700;
+        padding-left: 5px;
+        padding-right: 19px;
+    }}
+    QComboBox#filterRoleCombo::drop-down {{
+        width: 18px;
     }}
     QComboBox QAbstractItemView {{
         background: {appearance.surface};
@@ -195,6 +204,28 @@ def build_stylesheet(appearance: Appearance) -> str:
         outline: 0;
         selection-background-color: {selection_bg};
         selection-color: {appearance.text};
+    }}
+    QComboBoxPrivateContainer {{
+        background: {appearance.surface};
+        border: 1px solid {appearance.border};
+        border-radius: 7px;
+        padding: 0;
+    }}
+    QComboBox#filterFieldCombo, QComboBox#filterModeCombo {{
+        padding-left: 6px;
+        padding-right: 22px;
+    }}
+    QComboBox#filterFieldCombo::drop-down,
+    QComboBox#filterModeCombo::drop-down {{
+        width: 22px;
+    }}
+    QComboBox#filterModeCombo {{
+        font-size: 12px;
+        padding-left: 5px;
+        padding-right: 19px;
+    }}
+    QComboBox#filterModeCombo::drop-down {{
+        width: 18px;
     }}
     QSpinBox {{
         padding-right: 22px;
@@ -295,6 +326,33 @@ def build_stylesheet(appearance: Appearance) -> str:
         min-height: 22px;
         color: {appearance.muted};
     }}
+    QPushButton#datasetRefreshButton {{
+        background: transparent;
+        color: {appearance.text};
+        border: 1px solid {appearance.border};
+        border-radius: 12px;
+        padding: 1px 10px;
+        min-height: 18px;
+        max-height: 20px;
+        font-weight: 500;
+    }}
+    QPushButton#datasetRefreshButton:hover {{
+        background: {hover_bg};
+        border-color: {appearance.accent_color};
+    }}
+    QToolButton#logToggleButton {{
+        background: {secondary_bg};
+        color: {appearance.text};
+        border: 1px solid {appearance.border};
+        border-radius: 6px;
+        padding: 4px 10px;
+        font-weight: 500;
+    }}
+    QToolButton#logToggleButton:hover,
+    QToolButton#logToggleButton:checked {{
+        background: {secondary_hover_bg};
+        border-color: {appearance.accent_color};
+    }}
     QLabel#brandLabel {{
         background: transparent;
         border: 0;
@@ -360,18 +418,18 @@ def build_stylesheet(appearance: Appearance) -> str:
         border: 0;
     }}
     QLabel#datasetStatusFetched {{
-        color: #15803d;
-        background: #dcfce7;
-        border: 1px solid #bbf7d0;
-        border-radius: 6px;
-        padding: 3px 8px;
+        color: {status_fetched};
+        background: transparent;
+        border: 0;
+        padding: 0 4px;
+        font-weight: 600;
     }}
     QLabel#datasetStatusUnfetched {{
-        color: #92400e;
-        background: #fef3c7;
-        border: 1px solid #fde68a;
-        border-radius: 6px;
-        padding: 3px 8px;
+        color: {status_unfetched};
+        background: transparent;
+        border: 0;
+        padding: 0 4px;
+        font-weight: 600;
     }}
     QHeaderView::section {{
         background: {appearance.surface_alt};
@@ -391,7 +449,6 @@ def build_stylesheet(appearance: Appearance) -> str:
     }}
     QFrame#filterSidebar {{
         border: 0;
-        border-right: 1px solid {appearance.border};
         background: {appearance.surface_alt};
     }}
     QFrame#filterRuleCard {{
@@ -400,9 +457,23 @@ def build_stylesheet(appearance: Appearance) -> str:
         background: {appearance.surface};
         margin-top: 4px;
     }}
-    QWidget#selectionControls QPushButton {{
-        background: {secondary_bg};
+    QWidget#workspaceActionBar QPushButton {{
+        padding-left: 8px;
+        padding-right: 8px;
+    }}
+    QFrame#newDatasetPanel {{
+        background: {appearance.surface_alt};
         border: 1px solid {appearance.border};
+        border-radius: 8px;
+    }}
+    QLabel#newDatasetLabel {{
+        color: {appearance.text};
+        font-weight: 700;
+    }}
+    QDialog#utilityDialog, QMessageBox#messageDialog {{
+        background: {appearance.background};
+        border: 1px solid {appearance.border};
+        border-radius: 10px;
     }}
     QFrame#settingsContentArea {{
         background: {appearance.background};

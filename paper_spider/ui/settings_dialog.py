@@ -24,11 +24,13 @@ from PyQt6.QtWidgets import (
 )
 
 from .theme import ACCENTS, THEMES, appearance_from_values, build_stylesheet
+from .dialog_utils import configure_utility_dialog
 
 
 class SettingsDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        configure_utility_dialog(self)
         self.setWindowTitle("PaperSpider - Settings")
         self.setMinimumSize(640, 440)
         self.resize(720, 520)
