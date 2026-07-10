@@ -38,3 +38,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["paper_spider", "paper_spider.conferences", "paper_spider.ui"]
+
+[tool.setuptools.package-data]
+"paper_spider.ui" = ["assets/*.svg"]
