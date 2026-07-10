@@ -191,6 +191,15 @@ def build_stylesheet(appearance: Appearance) -> str:
     QComboBox:on, QSpinBox:focus, QLineEdit:focus {{
         border-color: {appearance.accent_color};
     }}
+    QLineEdit#quickFilterEdit {{
+        min-width: 210px;
+        border-radius: 8px;
+        padding-left: 12px;
+    }}
+    QComboBox#filterRoleCombo {{
+        color: {appearance.accent_color};
+        font-weight: 700;
+    }}
     QComboBox QAbstractItemView {{
         background: {appearance.surface};
         color: {appearance.text};
@@ -322,6 +331,13 @@ def build_stylesheet(appearance: Appearance) -> str:
         padding: 0;
         color: {appearance.muted};
         line-height: 1.25;
+    }}
+    QLabel#filterSentenceLabel {{
+        color: {appearance.muted};
+    }}
+    QWidget#minPreferredRow {{
+        background: transparent;
+        border: 0;
     }}
     QLabel#summaryCard {{
         background: {appearance.surface};

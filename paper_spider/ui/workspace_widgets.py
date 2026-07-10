@@ -41,6 +41,7 @@ class TopBar(QWidget):
         parent: Optional[QWidget] = None,
         include_window_controls: bool = False,
         summary_widget: Optional[QWidget] = None,
+        search_widget: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self.window_controls: Optional[WindowControls] = None
@@ -67,8 +68,11 @@ class TopBar(QWidget):
         layout.addWidget(self.app_label)
         layout.addSpacing(16)
         layout.addWidget(self.dataset_btn)
-        if summary_widget is not None:
+        if summary_widget is not None or search_widget is not None:
             layout.addStretch(1)
+        if search_widget is not None:
+            layout.addWidget(search_widget)
+        if summary_widget is not None:
             layout.addWidget(summary_widget)
         layout.addStretch()
         layout.addWidget(self.settings_btn)

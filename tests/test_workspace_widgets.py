@@ -5,7 +5,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QLabel
+from PyQt6.QtWidgets import QApplication, QLabel, QLineEdit
 
 from paper_spider.ui.theme import Appearance, build_stylesheet
 from paper_spider.ui.workspace_view_helpers import WorkspaceSummary
@@ -128,6 +128,17 @@ class WorkspaceWidgetsTests(unittest.TestCase):
         self.assertEqual("datasetButton", widget.dataset_btn.objectName())
         self.assertEqual("secondaryButton", widget.settings_btn.objectName())
 
+    def test_top_bar_owns_search_beside_summary_strip(self) -> None:
+        search = QLineEdit()
+        summary = SummaryStrip()
+
+        widget = TopBar(summary_widget=summary, search_widget=search)
+
+        self.assertIs(search.parentWidget(), widget)
+        self.assertIs(summary.parentWidget(), widget)
+        self.assertGreaterEqual(widget.layout().indexOf(search), 0)
+        self.assertGreaterEqual(widget.layout().indexOf(summary), 0)
+
     def test_dark_theme_styles_disabled_and_secondary_buttons(self) -> None:
         dark = Appearance(
             theme="Dark",
@@ -170,6 +181,9 @@ class WorkspaceWidgetsTests(unittest.TestCase):
         self.assertIn("QScrollBar::down-arrow:vertical", stylesheet)
         self.assertIn("QScrollBar::add-page:vertical", stylesheet)
         self.assertIn("QProgressBar::chunk", stylesheet)
+        self.assertIn("QLineEdit#quickFilterEdit", stylesheet)
+        self.assertIn("QComboBox#filterRoleCombo", stylesheet)
+        self.assertIn("QWidget#minPreferredRow", stylesheet)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtGui import QGuiApplication, QKeySequence
 from PyQt6.QtWidgets import QApplication, QFrame, QHeaderView, QPushButton, QScrollArea, QTableView
 
 from paper_spider.storage import PaperStorage
@@ -198,8 +198,21 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.window._prepare_quick_search(rows)
 
         self.assertIn("_quick_search", rows[0])
+        self.assertIs(self.window.quick_filter_edit.parentWidget(), self.window.top_bar)
+        self.assertIs(self.window.summary_strip.parentWidget(), self.window.top_bar)
+        self.assertGreaterEqual(
+            self.window.top_bar.layout().indexOf(self.window.quick_filter_edit), 0
+        )
+        self.assertGreaterEqual(self.window.top_bar.layout().indexOf(self.window.summary_strip), 0)
+        self.assertFalse(
+            self.window.table_stack.parentWidget().isAncestorOf(self.window.quick_filter_edit)
+        )
         self.assertTrue(self.window.quick_filter_timer.isSingleShot())
         self.assertGreaterEqual(self.window.quick_filter_timer.interval(), 100)
+        self.assertEqual(
+            QKeySequence.SequenceMatch.ExactMatch,
+            self.window.quick_filter_shortcut.key().matches(QKeySequence.StandardKey.Find),
+        )
 
     def test_select_controls_move_below_table_before_download_actions(self) -> None:
         summary_buttons = self.window.summary_strip.findChildren(QPushButton)
@@ -325,46 +338,89 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.assertNotIn("#edf2f7", self.window.selection_controls.styleSheet().lower())
         self.assertIn("#1f2937", build_stylesheet(dark).lower())
 
-    def test_filter_row_is_two_line_card(self) -> None:
+    def test_filter_row_reads_as_a_compact_sentence(self) -> None:
         row = FilterRow()
 
         self.assertIsInstance(row, QFrame)
         self.assertEqual("filterRuleCard", row.objectName())
         self.assertEqual(2, row.layout().count())
-        self.assertIs(row.layout().itemAt(1).widget(), row.text_row)
+        self.assertEqual("papers where", row.sentence_label.text())
+        self.assertIs(row.layout().itemAt(1).widget(), row.criteria_row)
         self.assertEqual("x", row.remove_btn.text())
-        self.assertLess(row.text_row.layout().indexOf(row.text_edit), row.text_row.layout().indexOf(row.remove_btn))
+        criteria_layout = row.criteria_row.layout()
+        self.assertLess(
+            criteria_layout.indexOf(row.field_combo),
+            criteria_layout.indexOf(row.mode_combo),
+        )
+        self.assertLess(
+            criteria_layout.indexOf(row.mode_combo),
+            criteria_layout.indexOf(row.text_edit),
+        )
 
-    def test_filter_row_first_line_uses_adaptive_widths(self) -> None:
+    def test_filter_row_roles_use_plain_language_with_legacy_config_values(self) -> None:
         row = FilterRow()
-        control_layout = row.control_row.layout()
 
-        self.assertGreaterEqual(row.role_combo.minimumWidth(), 100)
-        self.assertGreaterEqual(row.field_combo.minimumWidth(), 96)
-        self.assertGreaterEqual(row.mode_combo.minimumWidth(), 100)
-        self.assertGreater(row.role_combo.maximumWidth(), row.role_combo.minimumWidth())
-        self.assertGreater(row.field_combo.maximumWidth(), row.field_combo.minimumWidth())
-        self.assertGreater(row.mode_combo.maximumWidth(), row.mode_combo.minimumWidth())
-        self.assertGreater(control_layout.stretch(control_layout.indexOf(row.role_combo)), 0)
-        self.assertGreater(control_layout.stretch(control_layout.indexOf(row.field_combo)), 0)
-        self.assertGreater(control_layout.stretch(control_layout.indexOf(row.mode_combo)), 0)
+        self.assertEqual(
+            ["Include", "Prefer", "Exclude"],
+            [row.role_combo.itemText(index) for index in range(row.role_combo.count())],
+        )
+        self.assertEqual("Include", row.role_combo.currentText())
+        for label, internal_value in (
+            ("Include", "must"),
+            ("Prefer", "should"),
+            ("Exclude", "must not"),
+        ):
+            row.role_combo.setCurrentIndex(row.role_combo.findText(label))
+            self.assertEqual(internal_value, row.config().role)
 
-    def test_filter_sidebar_add_buttons_are_explicit_and_rows_start_at_top(self) -> None:
-        labels = {
-            button.text()
+    def test_filter_sidebar_has_one_add_rule_entry_and_defaults_to_include(self) -> None:
+        add_rule_buttons = [
+            button
             for button in self.window.findChildren(QPushButton)
-            if button.text().startswith("+")
-        }
+            if button.text() == "Add rule"
+        ]
 
-        self.assertIn("+Must", labels)
-        self.assertIn("+Should", labels)
-        self.assertIn("+Not", labels)
+        self.assertEqual([self.window.add_filter_btn], add_rule_buttons)
+        self.assertFalse(
+            any(
+                button.text() in {"+Must", "+Should", "+Not"}
+                for button in self.window.findChildren(QPushButton)
+            )
+        )
+        hint = self.window.filter_hint_label.text()
+        self.assertIn("Include", hint)
+        self.assertIn("Prefer", hint)
+        self.assertIn("Exclude", hint)
         self.assertTrue(self.window.filter_layout.alignment() & Qt.AlignmentFlag.AlignTop)
+        self.window.add_filter_btn.click()
+        self.assertEqual("Include", self.window.filter_rows[-1].role_combo.currentText())
+        self.assertEqual("must", self.window.filter_rows[-1].config().role)
 
-    def test_filter_sidebar_scrolls_and_minimum_should_is_single_line(self) -> None:
+    def test_minimum_preferred_controls_require_an_active_valid_prefer_rule(self) -> None:
         self.assertIsInstance(self.window.filter_scroll, QScrollArea)
-        self.assertEqual("minShouldRow", self.window.min_should_row.objectName())
-        self.assertEqual(2, self.window.min_should_row.layout().count())
+        self.assertEqual("minPreferredRow", self.window.min_preferred_row.objectName())
+        self.assertEqual(2, self.window.min_preferred_row.layout().count())
+        self.assertEqual("Minimum preferred matches", self.window.min_preferred_label.text())
+        self.assertTrue(self.window.min_preferred_row.isHidden())
+
+        row = self.window.filter_rows[0]
+        row.role_combo.setCurrentIndex(row.role_combo.findText("Prefer"))
+        self.assertTrue(self.window.min_preferred_row.isHidden())
+
+        row.text_edit.setText("systems")
+        self.assertFalse(self.window.min_preferred_row.isHidden())
+
+        row.enable_checkbox.setChecked(False)
+        self.assertTrue(self.window.min_preferred_row.isHidden())
+
+    def test_empty_filter_copy_uses_prefer_language(self) -> None:
+        self.window._all_rows = self._rows()
+        self.window._current_rows = []
+
+        self.window._update_empty_state()
+
+        self.assertIn("minimum Prefer match count", self.window.empty_state.message_label.text())
+        self.assertNotIn("Should", self.window.empty_state.message_label.text())
 
     def test_selection_is_preserved_by_paper_id_after_rerender(self) -> None:
         rows = self._rows()

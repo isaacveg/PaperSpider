@@ -56,7 +56,7 @@ from .workers import CancelToken, Worker
 
 
 class FilterRow(QFrame):
-    def __init__(self, parent: Optional[QWidget] = None, default_role: str = "Must") -> None:
+    def __init__(self, parent: Optional[QWidget] = None, default_role: str = "Include") -> None:
         super().__init__(parent)
         self.setObjectName("filterRuleCard")
         self.setFrameShape(QFrame.Shape.StyledPanel)
@@ -69,37 +69,44 @@ class FilterRow(QFrame):
 
         self.field_combo = QComboBox()
         for label, value in (
-            ("All", "all"),
+            ("Any field", "all"),
             ("Title", "title"),
-            ("Cat", "category"),
-            ("Author", "authors"),
-            ("Abs", "abstract"),
-            ("Keys", "keywords"),
+            ("Category", "category"),
+            ("Authors", "authors"),
+            ("Abstract", "abstract"),
+            ("Keywords", "keywords"),
         ):
             self.field_combo.addItem(label, value)
-        self.field_combo.setMinimumWidth(96)
+        self.field_combo.setMinimumWidth(104)
         self.field_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self.mode_combo = QComboBox()
-        self.mode_combo.addItem("has", "contains")
-        self.mode_combo.addItem("not", "not_contains")
-        self.mode_combo.setMinimumWidth(100)
+        self.mode_combo.addItem("contains", "contains")
+        self.mode_combo.addItem("does not contain", "not_contains")
+        self.mode_combo.setMinimumWidth(116)
         self.mode_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.mode_combo.setToolTip("has = contains; not = does not contain")
 
         self.role_combo = QComboBox()
         for label, value in (
-            ("Must", "must"),
-            ("Should", "should"),
-            ("Not", "must not"),
+            ("Include", "must"),
+            ("Prefer", "should"),
+            ("Exclude", "must not"),
         ):
             self.role_combo.addItem(label, value)
+        self.role_combo.setObjectName("filterRoleCombo")
         self.role_combo.setMinimumWidth(100)
         self.role_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        role_index = self.role_combo.findData(default_role.lower())
+        role_value = {
+            "include": "must",
+            "prefer": "should",
+            "exclude": "must not",
+        }.get(default_role.casefold(), default_role.casefold().replace("_", " "))
+        role_index = self.role_combo.findData(role_value)
         if role_index >= 0:
             self.role_combo.setCurrentIndex(role_index)
-        self.role_combo.setToolTip("Must = required, Should = optional, Must not = excluded")
+        self.role_combo.setToolTip(
+            "Include = required, Prefer = optional, Exclude = remove matches"
+        )
 
         self.text_edit = QLineEdit()
         self.text_edit.setPlaceholderText("keyword, author, title...")
@@ -110,26 +117,30 @@ class FilterRow(QFrame):
         self.remove_btn.setToolTip("Remove this rule")
         self.remove_btn.setFixedWidth(22)
 
-        self.control_row = QWidget()
-        control_layout = QHBoxLayout()
-        control_layout.setContentsMargins(0, 0, 0, 0)
-        control_layout.setSpacing(4)
-        control_layout.addWidget(self.enable_checkbox)
-        control_layout.addWidget(self.role_combo, stretch=4)
-        control_layout.addWidget(self.field_combo, stretch=3)
-        control_layout.addWidget(self.mode_combo, stretch=3)
-        self.control_row.setLayout(control_layout)
+        self.sentence_row = QWidget()
+        sentence_layout = QHBoxLayout()
+        sentence_layout.setContentsMargins(0, 0, 0, 0)
+        sentence_layout.setSpacing(4)
+        sentence_layout.addWidget(self.enable_checkbox)
+        sentence_layout.addWidget(self.role_combo)
+        self.sentence_label = QLabel("papers where")
+        self.sentence_label.setObjectName("filterSentenceLabel")
+        sentence_layout.addWidget(self.sentence_label)
+        sentence_layout.addStretch(1)
+        sentence_layout.addWidget(self.remove_btn)
+        self.sentence_row.setLayout(sentence_layout)
 
-        self.text_row = QWidget()
-        text_layout = QHBoxLayout()
-        text_layout.setContentsMargins(0, 0, 0, 0)
-        text_layout.setSpacing(4)
-        text_layout.addWidget(self.text_edit, stretch=1)
-        text_layout.addWidget(self.remove_btn)
-        self.text_row.setLayout(text_layout)
+        self.criteria_row = QWidget()
+        criteria_layout = QHBoxLayout()
+        criteria_layout.setContentsMargins(0, 0, 0, 0)
+        criteria_layout.setSpacing(4)
+        criteria_layout.addWidget(self.field_combo, stretch=3)
+        criteria_layout.addWidget(self.mode_combo, stretch=3)
+        criteria_layout.addWidget(self.text_edit, stretch=4)
+        self.criteria_row.setLayout(criteria_layout)
 
-        layout.addWidget(self.control_row)
-        layout.addWidget(self.text_row)
+        layout.addWidget(self.sentence_row)
+        layout.addWidget(self.criteria_row)
 
         self.setLayout(layout)
 
@@ -208,14 +219,27 @@ class WorkspaceWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.setContentsMargins(8, 8, 8, 8)
 
+        self.quick_filter_edit = QLineEdit()
+        self.quick_filter_edit.setObjectName("quickFilterEdit")
+        self.quick_filter_edit.setClearButtonEnabled(True)
+        self.quick_filter_edit.setPlaceholderText("Search papers")
+        self.quick_filter_edit.setMaximumWidth(280)
         self.summary_strip = SummaryStrip()
         self.top_bar = TopBar(
             self,
             include_window_controls=True,
             summary_widget=self.summary_strip,
+            search_widget=self.quick_filter_edit,
         )
         self.top_bar.settings_clicked.connect(self._open_settings)
         self.top_bar.dataset_clicked.connect(self._open_dataset_dialog)
+        self.quick_filter_shortcut = QShortcut(QKeySequence.StandardKey.Find, self)
+        self.quick_filter_shortcut.activated.connect(self._focus_quick_filter)
+        self.quick_filter_timer = QTimer(self)
+        self.quick_filter_timer.setSingleShot(True)
+        self.quick_filter_timer.setInterval(180)
+        self.quick_filter_timer.timeout.connect(self._apply_quick_filter)
+        self.quick_filter_edit.textChanged.connect(self._schedule_quick_filter)
         layout.addWidget(self.top_bar)
 
         filter_panel = QFrame()
@@ -229,26 +253,18 @@ class WorkspaceWindow(QMainWindow):
         filter_title.setObjectName("filterTitleLabel")
         filter_panel_layout.addWidget(filter_title)
 
-        filter_hint = QLabel(
-            "Must rules are required. Must not rules exclude matches. "
-            "Should rules apply only when the minimum below is greater than 0."
+        self.filter_hint_label = QLabel(
+            "Include rules must match. Prefer rules can contribute to a minimum. "
+            "Exclude rules remove matches."
         )
-        filter_hint.setObjectName("filterHintLabel")
-        filter_hint.setWordWrap(True)
-        filter_panel_layout.addWidget(filter_hint)
+        self.filter_hint_label.setObjectName("filterHintLabel")
+        self.filter_hint_label.setWordWrap(True)
+        filter_panel_layout.addWidget(self.filter_hint_label)
 
-        add_must_btn = QPushButton("+Must")
-        add_must_btn.setObjectName("secondaryButton")
-        add_must_btn.setToolTip("Add a Must rule")
-        add_must_btn.clicked.connect(lambda: self._add_filter("Must"))
-        add_should_btn = QPushButton("+Should")
-        add_should_btn.setObjectName("secondaryButton")
-        add_should_btn.setToolTip("Add a Should rule")
-        add_should_btn.clicked.connect(lambda: self._add_filter("Should"))
-        add_must_not_btn = QPushButton("+Not")
-        add_must_not_btn.setObjectName("secondaryButton")
-        add_must_not_btn.setToolTip("Add a Must not rule")
-        add_must_not_btn.clicked.connect(lambda: self._add_filter("Must not"))
+        self.add_filter_btn = QPushButton("Add rule")
+        self.add_filter_btn.setObjectName("secondaryButton")
+        self.add_filter_btn.setToolTip("Add an Include rule")
+        self.add_filter_btn.clicked.connect(lambda: self._add_filter())
         self.apply_filter_btn = QPushButton("Apply")
         self.apply_filter_btn.setObjectName("primaryButton")
         self.apply_filter_btn.clicked.connect(self._load_papers)
@@ -258,20 +274,18 @@ class WorkspaceWindow(QMainWindow):
         self.should_spin = QSpinBox()
         self.should_spin.setRange(0, 10)
         self.should_spin.setValue(0)
-        self.should_spin.setToolTip("Require at least N 'Should' filters to match")
-        add_rule_layout = QHBoxLayout()
-        add_rule_layout.addWidget(add_must_btn)
-        add_rule_layout.addWidget(add_should_btn)
-        add_rule_layout.addWidget(add_must_not_btn)
-        filter_panel_layout.addLayout(add_rule_layout)
-        self.min_should_row = QWidget()
-        self.min_should_row.setObjectName("minShouldRow")
+        self.should_spin.setToolTip("Require at least N Prefer rules to match")
+        filter_panel_layout.addWidget(self.add_filter_btn)
+        self.min_preferred_row = QWidget()
+        self.min_preferred_row.setObjectName("minPreferredRow")
+        self.min_should_row = self.min_preferred_row
         min_should_layout = QHBoxLayout()
         min_should_layout.setContentsMargins(0, 0, 0, 0)
-        min_should_layout.addWidget(QLabel("Min should match"))
+        self.min_preferred_label = QLabel("Minimum preferred matches")
+        min_should_layout.addWidget(self.min_preferred_label)
         min_should_layout.addWidget(self.should_spin)
-        self.min_should_row.setLayout(min_should_layout)
-        filter_panel_layout.addWidget(self.min_should_row)
+        self.min_preferred_row.setLayout(min_should_layout)
+        filter_panel_layout.addWidget(self.min_preferred_row)
 
         filter_buttons = QHBoxLayout()
         filter_buttons.addWidget(self.apply_filter_btn)
@@ -360,22 +374,6 @@ class WorkspaceWindow(QMainWindow):
         center_panel = QWidget()
         center_layout = QVBoxLayout()
         center_layout.setContentsMargins(0, 0, 0, 0)
-        center_header = QHBoxLayout()
-        center_header.setContentsMargins(0, 0, 0, 0)
-        self.quick_filter_edit = QLineEdit()
-        self.quick_filter_edit.setClearButtonEnabled(True)
-        self.quick_filter_edit.setPlaceholderText("Quick filter")
-        self.quick_filter_edit.setMaximumWidth(280)
-        self.quick_filter_shortcut = QShortcut(QKeySequence.StandardKey.Find, self)
-        self.quick_filter_shortcut.activated.connect(self._focus_quick_filter)
-        self.quick_filter_timer = QTimer(self)
-        self.quick_filter_timer.setSingleShot(True)
-        self.quick_filter_timer.setInterval(180)
-        self.quick_filter_timer.timeout.connect(self._apply_quick_filter)
-        self.quick_filter_edit.textChanged.connect(self._schedule_quick_filter)
-        center_header.addStretch(1)
-        center_header.addWidget(self.quick_filter_edit)
-        center_layout.addLayout(center_header)
         center_layout.addWidget(self.table_stack, stretch=1)
         center_layout.addLayout(self.action_layout)
         center_panel.setLayout(center_layout)
@@ -500,7 +498,7 @@ class WorkspaceWindow(QMainWindow):
             self._empty_action = "clear_filters"
             self.empty_state.set_content(
                 "No papers match the current filters",
-                "Try clearing filters or lowering the minimum Should match count.",
+                "Try clearing filters or lowering the minimum Prefer match count.",
                 "Clear filters",
             )
             self.table_stack.setCurrentWidget(self.empty_state)
@@ -712,23 +710,34 @@ class WorkspaceWindow(QMainWindow):
         self._refresh_status()
         self._load_papers(force_refresh=True)
 
-    def _add_filter(self, default_role: str = "Must") -> None:
+    def _add_filter(self, default_role: str = "Include") -> None:
         row = FilterRow(default_role=default_role)
         row.remove_btn.clicked.connect(lambda: self._remove_filter(row))
         row.text_edit.returnPressed.connect(lambda: self._load_papers())
+        row.enable_checkbox.toggled.connect(
+            lambda _checked: self._update_min_preferred_visibility()
+        )
+        row.role_combo.currentIndexChanged.connect(
+            lambda _index: self._update_min_preferred_visibility()
+        )
+        row.text_edit.textChanged.connect(
+            lambda _text: self._update_min_preferred_visibility()
+        )
         self.filter_rows.append(row)
         self.filter_layout.addWidget(row)
+        self._update_min_preferred_visibility()
 
     def _remove_filter(self, row: FilterRow) -> None:
         if row in self.filter_rows:
             self.filter_rows.remove(row)
         row.setParent(None)
         row.deleteLater()
+        self._update_min_preferred_visibility()
 
     def _clear_filters(self) -> None:
         for row in list(self.filter_rows):
             self._remove_filter(row)
-        self._add_filter("Must")
+        self._add_filter()
         self._load_papers()
 
     def _filter_configs(self) -> List[FilterConfig]:
@@ -747,6 +756,13 @@ class WorkspaceWindow(QMainWindow):
         if self.should_spin.value() > should_count:
             self.should_spin.setValue(should_count)
         return configs, self.should_spin.value()
+
+    def _update_min_preferred_visibility(self) -> None:
+        prefer_count = sum(
+            1 for config in self._filter_configs() if config.role == "should"
+        )
+        self.should_spin.setRange(0, prefer_count)
+        self.min_preferred_row.setVisible(prefer_count > 0)
 
     def _set_rows_loading(self, loading: bool, message: Optional[str] = None) -> None:
         self._rows_loading = loading
