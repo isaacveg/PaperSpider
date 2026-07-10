@@ -68,10 +68,11 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.app = app()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.storage = PaperStorage(self.temp_dir.name, "iclr", 2025)
-        with patch.object(WorkspaceWindow, "_load_papers"):
-            self.window = WorkspaceWindow(_FakeConference(), self.storage)
+        self.window = WorkspaceWindow(_FakeConference(), self.storage)
 
     def tearDown(self) -> None:
+        self.window.thread_pool.waitForDone()
+        self.app.processEvents()
         self.window.close()
         self.temp_dir.cleanup()
 
@@ -131,6 +132,12 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.assertLessEqual(self.window.width(), 1100)
         self.assertTrue(self.window.workspace_splitter.isCollapsible(0))
         self.assertTrue(self.window.workspace_splitter.isCollapsible(2))
+        splitter_sizes = self.window.workspace_splitter.sizes()
+        self.assertGreaterEqual(
+            splitter_sizes[0], self.window.filter_panel.minimumWidth()
+        )
+        self.assertGreater(splitter_sizes[1], splitter_sizes[2])
+        self.assertGreater(splitter_sizes[2], 0)
 
         filter_right = self.window.filter_panel.contentsRect().right()
         for control in (
@@ -140,6 +147,22 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         ):
             right_edge = control.mapTo(self.window.filter_panel, control.rect().bottomRight()).x()
             self.assertLessEqual(right_edge, filter_right)
+
+        action_bounds = self.window.download_action_group.contentsRect()
+        for button in (
+            self.window.abstract_btn,
+            self.window.pdf_btn,
+            self.window.bib_btn,
+            self.window.export_btn,
+        ):
+            top_left = button.mapTo(self.window.download_action_group, button.rect().topLeft())
+            bottom_right = button.mapTo(
+                self.window.download_action_group, button.rect().bottomRight()
+            )
+            self.assertGreaterEqual(top_left.x(), action_bounds.left())
+            self.assertGreaterEqual(top_left.y(), action_bounds.top())
+            self.assertLessEqual(bottom_right.x(), action_bounds.right())
+            self.assertLessEqual(bottom_right.y(), action_bounds.bottom())
 
     def test_render_rows_keeps_artifact_actions_out_of_table(self) -> None:
         rows = self._rows()

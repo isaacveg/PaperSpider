@@ -338,6 +338,33 @@ class DatasetDialogTests(unittest.TestCase):
         self.assertTrue(dialog.dataset_table.isRowHidden(0))
         self.assertFalse(dialog.dataset_table.isRowHidden(1))
 
+    def test_dataset_search_cannot_select_a_hidden_current_row(self) -> None:
+        with patch("paper_spider.ui.dataset_dialog.QSettings", FakeSettings):
+            dialog = DatasetDialog()
+
+        dialog.base_dir_edit.setText("/tmp")
+        dialog._add_table_row(
+            DatasetEntry("acl", 2025, "/tmp/acl/2025", True, 1), editable=False
+        )
+        dialog._add_table_row(
+            DatasetEntry("nsdi", 2025, "/tmp/nsdi/2025", True, 1), editable=False
+        )
+        dialog.dataset_table.setCurrentCell(0, 0)
+
+        dialog.search_edit.setText("nsdi")
+
+        self.assertTrue(dialog.dataset_table.isRowHidden(0))
+        self.assertIsNone(dialog._selected_row())
+        self.assertFalse(dialog.use_selected_btn.isEnabled())
+        dialog._use_selected()
+        self.assertEqual(QDialog.DialogCode.Rejected.value, dialog.result())
+        self.assertIsNone(dialog.selection())
+
+        dialog.search_edit.clear()
+
+        self.assertEqual(0, dialog._selected_row())
+        self.assertTrue(dialog.use_selected_btn.isEnabled())
+
 
 class ExportDialogTests(unittest.TestCase):
     def setUp(self) -> None:

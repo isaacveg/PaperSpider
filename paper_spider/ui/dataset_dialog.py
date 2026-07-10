@@ -413,7 +413,7 @@ class DatasetDialog(QDialog):
 
     def _selected_row(self) -> Optional[int]:
         row = self.dataset_table.currentRow()
-        return row if row >= 0 else None
+        return row if row >= 0 and not self.dataset_table.isRowHidden(row) else None
 
     def _update_use_selected_state(self, *_args) -> None:
         row = self._selected_row()
@@ -430,6 +430,7 @@ class DatasetDialog(QDialog):
         for row, entry in enumerate(self._entries):
             text = f"{self._conference_name(entry.conf_slug)} {entry.year} {'fetched' if entry.is_existing else 'unfetched'}".casefold()
             self.dataset_table.setRowHidden(row, bool(query and query not in text))
+        self._update_use_selected_state()
 
     def _conference_name(self, conf_slug: str) -> str:
         for conf in self._conferences:
