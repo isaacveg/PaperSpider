@@ -505,62 +505,6 @@ def build_stylesheet(appearance: Appearance) -> str:
         font-weight: 600;
         min-width: 28px;
     }}
-    QFrame#framelessTitleBar {{
-        background: {appearance.surface};
-        border: 0;
-        border-bottom: 1px solid {appearance.border};
-        border-radius: 0;
-    }}
-    QLabel#framelessTitleLabel {{
-        background: transparent;
-        border: 0;
-        color: {appearance.text};
-        font-weight: 700;
-    }}
-    QWidget#windowControls {{
-        background: transparent;
-        border: 0;
-    }}
-    QToolButton#trafficCloseButton,
-    QToolButton#trafficMinimizeButton,
-    QToolButton#trafficZoomButton {{
-        border: 0;
-        border-radius: 6px;
-        min-width: 12px;
-        max-width: 12px;
-        min-height: 12px;
-        max-height: 12px;
-        padding: 0;
-    }}
-    QToolButton#trafficCloseButton {{
-        background: #ff5f57;
-    }}
-    QToolButton#trafficMinimizeButton {{
-        background: #ffbd2e;
-    }}
-    QToolButton#trafficZoomButton {{
-        background: #28c840;
-    }}
-    QToolButton#windowMinimizeButton,
-    QToolButton#windowMaximizeButton,
-    QToolButton#windowCloseButton {{
-        background: transparent;
-        color: {appearance.text};
-        border: 0;
-        border-radius: 5px;
-        min-width: 34px;
-        min-height: 26px;
-        padding: 0;
-        font-weight: 600;
-    }}
-    QToolButton#windowMinimizeButton:hover,
-    QToolButton#windowMaximizeButton:hover {{
-        background: {hover_bg};
-    }}
-    QToolButton#windowCloseButton:hover {{
-        background: #dc2626;
-        color: white;
-    }}
     QProgressBar {{
         background: {appearance.surface};
         color: {appearance.muted};

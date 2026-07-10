@@ -68,7 +68,8 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.app = app()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.storage = PaperStorage(self.temp_dir.name, "iclr", 2025)
-        self.window = WorkspaceWindow(_FakeConference(), self.storage)
+        with patch.object(WorkspaceWindow, "_load_papers"):
+            self.window = WorkspaceWindow(_FakeConference(), self.storage)
 
     def tearDown(self) -> None:
         self.window.close()
@@ -118,6 +119,27 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         )
         self.assertEqual([], self.window.top_bar.findChildren(QWidget, "windowControls"))
         self.assertFalse(hasattr(self.window.top_bar, "window_controls"))
+
+    def test_workspace_resizes_to_laptop_width_without_clipping_filter_controls(self) -> None:
+        self.window.thread_pool.waitForDone()
+        self.app.processEvents()
+        self.window.resize(1100, 720)
+        self.window.show()
+        self.app.processEvents()
+
+        self.assertLessEqual(self.window.minimumSizeHint().width(), 1100)
+        self.assertLessEqual(self.window.width(), 1100)
+        self.assertTrue(self.window.workspace_splitter.isCollapsible(0))
+        self.assertTrue(self.window.workspace_splitter.isCollapsible(2))
+
+        filter_right = self.window.filter_panel.contentsRect().right()
+        for control in (
+            self.window.filter_rows[0].field_combo,
+            self.window.filter_rows[0].mode_combo,
+            self.window.filter_rows[0].text_edit,
+        ):
+            right_edge = control.mapTo(self.window.filter_panel, control.rect().bottomRight()).x()
+            self.assertLessEqual(right_edge, filter_right)
 
     def test_render_rows_keeps_artifact_actions_out_of_table(self) -> None:
         rows = self._rows()
@@ -223,7 +245,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
             self.window.quick_filter_shortcut.key().matches(QKeySequence.StandardKey.Find),
         )
 
-    def test_select_controls_move_below_table_before_download_actions(self) -> None:
+    def test_select_and_download_controls_use_separate_action_rows(self) -> None:
         summary_buttons = self.window.summary_strip.findChildren(QPushButton)
 
         self.assertEqual([], summary_buttons)
@@ -232,9 +254,26 @@ class WorkspaceWindowUiTests(unittest.TestCase):
             ["Invert"],
             [button.text() for button in self.window.selection_controls.findChildren(QPushButton)],
         )
+        self.assertTrue(hasattr(self.window, "selection_action_group"))
+        self.assertTrue(hasattr(self.window, "download_action_group"))
+        self.assertIs(
+            self.window.selection_controls.parentWidget(),
+            self.window.selection_action_group,
+        )
+        self.assertTrue(
+            all(
+                button.parentWidget() is self.window.download_action_group
+                for button in (
+                    self.window.abstract_btn,
+                    self.window.pdf_btn,
+                    self.window.bib_btn,
+                    self.window.export_btn,
+                )
+            )
+        )
         self.assertLess(
-            self.window.action_layout.indexOf(self.window.selection_controls),
-            self.window.action_layout.indexOf(self.window.abstract_btn),
+            self.window.action_layout.indexOf(self.window.selection_action_group),
+            self.window.action_layout.indexOf(self.window.download_action_group),
         )
 
     def test_select_header_toggles_visible_selection(self) -> None:

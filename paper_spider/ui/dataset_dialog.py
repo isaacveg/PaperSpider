@@ -36,7 +36,6 @@ from PyQt6.QtWidgets import (
 
 from ..conferences import available_conferences
 from .theme import apply_theme
-from .window_chrome import FramelessTitleBar
 
 YEAR_MIN = 1980
 YEAR_MAX = 2100
@@ -78,8 +77,6 @@ class DatasetDialog(QDialog):
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
-        self.title_bar = FramelessTitleBar(self, "Datasets", self)
-        root_layout.addWidget(self.title_bar)
 
         content = QWidget()
         layout = QVBoxLayout()
@@ -118,9 +115,9 @@ class DatasetDialog(QDialog):
         toolbar_layout.addWidget(self.search_edit)
         datasets_layout.addLayout(toolbar_layout)
 
-        self.dataset_table = QTableWidget(0, 6)
+        self.dataset_table = QTableWidget(0, 5)
         self.dataset_table.setHorizontalHeaderLabels(
-            ["", "Conference", "Year", "Status", "Papers", "Actions"]
+            ["Conference", "Year", "Status", "Papers", "Actions"]
         )
         self.dataset_table.setAlternatingRowColors(True)
         self.dataset_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -128,13 +125,13 @@ class DatasetDialog(QDialog):
         self.dataset_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.dataset_table.verticalHeader().setVisible(False)
         self.dataset_table.cellDoubleClicked.connect(self._use_row)
+        self.dataset_table.currentCellChanged.connect(self._update_use_selected_state)
         header = self.dataset_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         datasets_layout.addWidget(self.dataset_table, stretch=1)
         datasets_group.setLayout(datasets_layout)
         layout.addWidget(datasets_group, 1)
@@ -144,13 +141,14 @@ class DatasetDialog(QDialog):
         self.storage_label.setObjectName("mutedLabel")
         btn_layout.addWidget(self.storage_label)
         btn_layout.addStretch()
-        use_selected_btn = QPushButton("Use selected")
-        use_selected_btn.setObjectName("primaryButton")
-        use_selected_btn.clicked.connect(self._use_selected)
+        self.use_selected_btn = QPushButton("Use selected")
+        self.use_selected_btn.setObjectName("primaryButton")
+        self.use_selected_btn.setEnabled(False)
+        self.use_selected_btn.clicked.connect(self._use_selected)
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
-        btn_layout.addWidget(use_selected_btn)
         btn_layout.addWidget(cancel_btn)
+        btn_layout.addWidget(self.use_selected_btn)
         layout.addLayout(btn_layout)
 
         content.setLayout(layout)
@@ -163,6 +161,7 @@ class DatasetDialog(QDialog):
             self.base_dir_edit.blockSignals(True)
             self.base_dir_edit.setText(str(base_dir))
             self.base_dir_edit.blockSignals(False)
+            self.storage_label.setText(f"Storage: {base_dir}")
             self._refresh_existing(str(base_dir))
 
     def _on_base_dir_changed(self, text: str) -> None:
@@ -179,27 +178,19 @@ class DatasetDialog(QDialog):
         self.dataset_table.setRowCount(0)
         self._entries = []
         if not base_dir:
+            self._update_use_selected_state()
             return
         datasets = self._scan_datasets(base_dir)
         for entry in datasets:
             self._add_table_row(entry, editable=False, focus=False)
         if self.dataset_table.rowCount() > 0:
-            self.dataset_table.setCurrentCell(0, 1)
+            self.dataset_table.setCurrentCell(0, 0)
         self._apply_search()
 
     def _add_table_row(self, entry: DatasetEntry, editable: bool, focus: bool = True) -> int:
         row = self.dataset_table.rowCount()
         self.dataset_table.insertRow(row)
         self._entries.insert(row, entry)
-
-        select_item = QTableWidgetItem()
-        select_item.setFlags(
-            Qt.ItemFlag.ItemIsEnabled
-            | Qt.ItemFlag.ItemIsSelectable
-            | Qt.ItemFlag.ItemIsUserCheckable
-        )
-        select_item.setCheckState(Qt.CheckState.Unchecked)
-        self.dataset_table.setItem(row, 0, select_item)
 
         if editable:
             conf_combo = QComboBox()
@@ -208,20 +199,20 @@ class DatasetDialog(QDialog):
             index = conf_combo.findData(entry.conf_slug)
             if index >= 0:
                 conf_combo.setCurrentIndex(index)
-            self.dataset_table.setCellWidget(row, 1, conf_combo)
+            self.dataset_table.setCellWidget(row, 0, conf_combo)
 
             year_spin = QSpinBox()
             year_spin.setRange(YEAR_MIN, YEAR_MAX)
             year_spin.setValue(max(min(entry.year, YEAR_MAX), YEAR_MIN))
-            self.dataset_table.setCellWidget(row, 2, year_spin)
+            self.dataset_table.setCellWidget(row, 1, year_spin)
         else:
             conf_item = QTableWidgetItem(self._conference_name(entry.conf_slug))
             conf_item.setData(Qt.ItemDataRole.UserRole, entry)
             conf_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            self.dataset_table.setItem(row, 1, conf_item)
+            self.dataset_table.setItem(row, 0, conf_item)
             year_item = QTableWidgetItem(str(entry.year))
             year_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            self.dataset_table.setItem(row, 2, year_item)
+            self.dataset_table.setItem(row, 1, year_item)
 
         status_container = QWidget()
         status_layout = QHBoxLayout()
@@ -234,12 +225,12 @@ class DatasetDialog(QDialog):
         status_label.setMaximumHeight(26)
         status_layout.addWidget(status_label)
         status_container.setLayout(status_layout)
-        self.dataset_table.setCellWidget(row, 3, status_container)
+        self.dataset_table.setCellWidget(row, 2, status_container)
 
         paper_item = QTableWidgetItem(f"{entry.paper_count:,}")
         paper_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         paper_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-        self.dataset_table.setItem(row, 4, paper_item)
+        self.dataset_table.setItem(row, 3, paper_item)
 
         actions = QWidget()
         actions_layout = QHBoxLayout()
@@ -256,11 +247,13 @@ class DatasetDialog(QDialog):
         actions_layout.addWidget(fetch_btn)
         actions_layout.addWidget(delete_btn)
         actions.setLayout(actions_layout)
-        self.dataset_table.setCellWidget(row, 5, actions)
+        self.dataset_table.setCellWidget(row, 4, actions)
 
         self.dataset_table.setRowHeight(row, 42)
         if focus:
-            self.dataset_table.setCurrentCell(row, 1)
+            self.dataset_table.setCurrentCell(row, 0)
+        else:
+            self._update_use_selected_state()
         return row
 
     def _add_entry(self) -> None:
@@ -298,6 +291,7 @@ class DatasetDialog(QDialog):
                 return
         self.dataset_table.removeRow(row)
         self._entries.pop(row)
+        self._update_use_selected_state()
 
     def _delete_action(self, widget: QWidget) -> None:
         row = self._row_for_widget(widget)
@@ -369,7 +363,7 @@ class DatasetDialog(QDialog):
         row = self._selected_row()
         if row is None:
             return
-        self._use_row(row, 1)
+        self._use_row(row, 0)
 
     def _use_row(self, row: int, _column: int = 0) -> None:
         if not self._row_is_fetched(row):
@@ -407,8 +401,8 @@ class DatasetDialog(QDialog):
         self.accept()
 
     def _row_selection(self, row: int) -> tuple[str, int]:
-        conf_widget = self.dataset_table.cellWidget(row, 1)
-        year_widget = self.dataset_table.cellWidget(row, 2)
+        conf_widget = self.dataset_table.cellWidget(row, 0)
+        year_widget = self.dataset_table.cellWidget(row, 1)
         if isinstance(conf_widget, QComboBox) and isinstance(year_widget, QSpinBox):
             return str(conf_widget.currentData()), int(year_widget.value())
         entry = self._entries[row]
@@ -418,16 +412,16 @@ class DatasetDialog(QDialog):
         return 0 <= row < len(self._entries) and self._entries[row].is_existing
 
     def _selected_row(self) -> Optional[int]:
-        for row in range(self.dataset_table.rowCount()):
-            item = self.dataset_table.item(row, 0)
-            if item and item.checkState() == Qt.CheckState.Checked:
-                return row
         row = self.dataset_table.currentRow()
         return row if row >= 0 else None
 
+    def _update_use_selected_state(self, *_args) -> None:
+        row = self._selected_row()
+        self.use_selected_btn.setEnabled(row is not None and self._row_is_fetched(row))
+
     def _row_for_widget(self, widget: QWidget) -> Optional[int]:
         for row in range(self.dataset_table.rowCount()):
-            if self.dataset_table.cellWidget(row, 5) is widget:
+            if self.dataset_table.cellWidget(row, 4) is widget:
                 return row
         return None
 
