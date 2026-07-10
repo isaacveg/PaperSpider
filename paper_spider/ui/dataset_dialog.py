@@ -373,13 +373,13 @@ class DatasetDialog(QDialog):
         datasets: List[DatasetEntry] = []
         if not os.path.isdir(base_dir):
             return datasets
-        for conf_slug in sorted(os.listdir(base_dir)):
+        for conf_slug in sorted(self._safe_listdir(base_dir)):
             if conf_slug.startswith("."):
                 continue
             conf_path = os.path.join(base_dir, conf_slug)
             if not os.path.isdir(conf_path):
                 continue
-            for year_name in sorted(os.listdir(conf_path), reverse=True):
+            for year_name in sorted(self._safe_listdir(conf_path), reverse=True):
                 year_path = os.path.join(conf_path, year_name)
                 if not os.path.isdir(year_path):
                     continue
@@ -402,6 +402,13 @@ class DatasetDialog(QDialog):
                     )
                 )
         return datasets
+
+    @staticmethod
+    def _safe_listdir(path: str) -> List[str]:
+        try:
+            return os.listdir(path)
+        except OSError:
+            return []
 
     def _paper_count(self, db_path: str, conf_slug: str, year: int) -> int:
         try:

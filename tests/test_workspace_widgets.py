@@ -13,11 +13,11 @@ from paper_spider.ui.workspace_view_helpers import WorkspaceSummary
 from paper_spider.ui.workspace_widgets import CollapsibleLogPanel, DetailsPanel, SummaryStrip, TopBar
 
 
+_APPLICATION = QApplication.instance() or QApplication([])
+
+
 def app() -> QApplication:
-    existing = QApplication.instance()
-    if existing is not None:
-        return existing
-    return QApplication([])
+    return _APPLICATION
 
 
 class WorkspaceWidgetsTests(unittest.TestCase):

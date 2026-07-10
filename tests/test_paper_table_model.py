@@ -12,11 +12,11 @@ from PyQt6.QtWidgets import QApplication
 from paper_spider.ui.paper_table_model import PaperTableModel
 
 
+_APPLICATION = QApplication.instance() or QApplication([])
+
+
 def app() -> QApplication:
-    existing = QApplication.instance()
-    if existing is not None:
-        return existing
-    return QApplication([])
+    return _APPLICATION
 
 
 class PaperTableModelTests(unittest.TestCase):

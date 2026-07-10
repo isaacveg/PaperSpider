@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -31,11 +32,11 @@ from paper_spider.ui.export_dialog import ExportDialog
 from paper_spider.ui.settings_dialog import SettingsDialog
 
 
+_APPLICATION = QApplication.instance() or QApplication([])
+
+
 def app() -> QApplication:
-    existing = QApplication.instance()
-    if existing is not None:
-        return existing
-    return QApplication([])
+    return _APPLICATION
 
 
 class FakeSettings:
@@ -368,6 +369,24 @@ class DatasetDialogTests(unittest.TestCase):
 
         self.assertTrue(dialog.dataset_table.isRowHidden(0))
         self.assertFalse(dialog.dataset_table.isRowHidden(1))
+
+    def test_dataset_scan_skips_directories_without_read_permission(self) -> None:
+        with tempfile.TemporaryDirectory() as base_dir:
+            blocked_dir = os.path.join(base_dir, "blocked")
+            os.makedirs(blocked_dir)
+            real_listdir = os.listdir
+
+            def listdir(path: str) -> list[str]:
+                if path == blocked_dir:
+                    raise PermissionError(path)
+                return real_listdir(path)
+
+            with patch("paper_spider.ui.dataset_dialog.os.listdir", side_effect=listdir):
+                with patch("paper_spider.ui.dataset_dialog.QSettings", FakeSettings):
+                    dialog = DatasetDialog()
+                datasets = dialog._scan_datasets(base_dir)
+
+        self.assertEqual([], datasets)
 
     def test_dataset_search_cannot_select_a_hidden_current_row(self) -> None:
         with patch("paper_spider.ui.dataset_dialog.QSettings", FakeSettings):

@@ -11,11 +11,11 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from paper_spider.ui.dialog_utils import build_message_box
 
 
+_APPLICATION = QApplication.instance() or QApplication([])
+
+
 def app() -> QApplication:
-    existing = QApplication.instance()
-    if existing is not None:
-        return existing
-    return QApplication([])
+    return _APPLICATION
 
 
 class MessageDialogTests(unittest.TestCase):

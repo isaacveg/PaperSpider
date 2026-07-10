@@ -34,11 +34,11 @@ from paper_spider.ui.workspace_window import (
 from paper_spider.workspace_service import DownloadBatchResult
 
 
+_APPLICATION = QApplication.instance() or QApplication([])
+
+
 def app() -> QApplication:
-    existing = QApplication.instance()
-    if existing is not None:
-        return existing
-    return QApplication([])
+    return _APPLICATION
 
 
 def required_combo_text_width(combo) -> int:

@@ -9,13 +9,30 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Install Qt runtime libraries
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1
       - name: Install uv
         run: pip install uv
       - name: Sync dependencies
         run: uv sync
+      - name: Verify headless Qt
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          uv run python -c \
+            "from PyQt6.QtWidgets import QApplication; app = QApplication([])"
       - name: Run tests
-        run: uv run python -m unittest discover -s tests -v
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          for test_file in tests/test_*.py; do
+            uv run python -m unittest discover \
+              -s tests \
+              -p "$(basename "$test_file")" \
+              -v
+          done
