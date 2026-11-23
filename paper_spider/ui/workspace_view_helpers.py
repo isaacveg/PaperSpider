@@ -6,29 +6,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import AbstractSet, Mapping, Sequence
-
-
-@dataclass(frozen=True)
-class WorkspaceSummary:
-    total: int
-    abstracts: int
-    pdfs: int
-    bibs: int
 
 
 def paper_id_for_row(row: Mapping[str, object]) -> str:
     return str(row.get("paper_id") or "")
-
-
-def summarize_rows(rows: Sequence[Mapping[str, object]]) -> WorkspaceSummary:
-    return WorkspaceSummary(
-        total=len(rows),
-        abstracts=sum(1 for row in rows if bool(row.get("abstract_status"))),
-        pdfs=sum(1 for row in rows if bool(row.get("has_pdf"))),
-        bibs=sum(1 for row in rows if bool(row.get("has_bib"))),
-    )
 
 
 def reconcile_selected_ids(

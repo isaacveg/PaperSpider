@@ -70,7 +70,13 @@ def show_error(parent: Optional[QWidget], title: str, text: str) -> None:
     _exec_message(build_message_box(parent, QMessageBox.Icon.Critical, title, text))
 
 
-def ask_confirmation(parent: Optional[QWidget], title: str, text: str) -> bool:
+def ask_confirmation(
+    parent: Optional[QWidget],
+    title: str,
+    text: str,
+    confirm_text: Optional[str] = None,
+    cancel_text: Optional[str] = None,
+) -> bool:
     box = build_message_box(
         parent,
         QMessageBox.Icon.Question,
@@ -78,4 +84,10 @@ def ask_confirmation(parent: Optional[QWidget], title: str, text: str) -> bool:
         text,
         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
     )
+    yes_button = box.button(QMessageBox.StandardButton.Yes)
+    cancel_button = box.button(QMessageBox.StandardButton.Cancel)
+    if yes_button is not None and confirm_text:
+        yes_button.setText(confirm_text)
+    if cancel_button is not None and cancel_text:
+        cancel_button.setText(cancel_text)
     return _exec_message(box) == QMessageBox.StandardButton.Yes

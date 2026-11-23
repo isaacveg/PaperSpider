@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -23,7 +24,16 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .theme import ACCENTS, THEMES, appearance_from_values, build_stylesheet
+from .i18n import tr
+from .theme import (
+    ACCENTS,
+    DEFAULT_ACCENT,
+    DEFAULT_THEME,
+    THEMES,
+    appearance_from_values,
+    build_stylesheet,
+    selected_theme,
+)
 from .dialog_utils import configure_utility_dialog
 
 
@@ -31,12 +41,30 @@ class SettingsDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         configure_utility_dialog(self)
-        self.setWindowTitle("PaperSpider - Settings")
+        self.setWindowTitle(tr("PaperSpider - Settings"))
         self.setMinimumSize(640, 440)
         self.resize(720, 520)
         self._settings = QSettings("PaperSpider", "PaperSpider")
+        self._style_hints = None
         self._build_ui()
         self._load_previous_state()
+        app = QGuiApplication.instance()
+        if app is not None:
+            self._style_hints = app.styleHints()
+            self._style_hints.colorSchemeChanged.connect(
+                self._on_system_color_scheme_changed
+            )
+
+    def done(self, result: int) -> None:
+        if self._style_hints is not None:
+            try:
+                self._style_hints.colorSchemeChanged.disconnect(
+                    self._on_system_color_scheme_changed
+                )
+            except (TypeError, RuntimeError):
+                pass
+            self._style_hints = None
+        super().done(result)
 
     def _build_ui(self) -> None:
         root_layout = QVBoxLayout()
@@ -65,12 +93,14 @@ class SettingsDialog(QDialog):
         self.delay_unit_label.setObjectName("settingsUnitLabel")
         self.delay_unit_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         self.request_card = self._settings_card(
-            "Request Interval",
+            tr("Request Interval"),
             self._field_group(
                 [
                     self._setting_row(
-                        "Delay Between Requests",
-                        "Time to wait between consecutive requests to the server.",
+                        tr("Delay Between Requests"),
+                        tr(
+                            "Time to wait between consecutive requests to the server."
+                        ),
                         self._inline_controls(self.delay_spin, self.delay_unit_label),
                     )
                 ]
@@ -80,23 +110,25 @@ class SettingsDialog(QDialog):
         self.content_cards_layout.addWidget(self.request_card)
 
         self.theme_combo = QComboBox()
-        self.theme_combo.addItems(THEMES)
-        self.theme_combo.currentTextChanged.connect(self._preview_theme)
+        for theme in THEMES:
+            self.theme_combo.addItem(tr(theme), theme)
+        self.theme_combo.currentIndexChanged.connect(self._preview_theme)
         self.accent_combo = QComboBox()
-        self.accent_combo.addItems(ACCENTS.keys())
-        self.accent_combo.currentTextChanged.connect(self._preview_theme)
+        for accent in ACCENTS:
+            self.accent_combo.addItem(tr(accent), accent)
+        self.accent_combo.currentIndexChanged.connect(self._preview_theme)
         self.appearance_card = self._settings_card(
-            "Appearance",
+            tr("Appearance"),
             self._field_group(
                 [
                     self._setting_row(
-                        "Theme",
-                        "Choose the light or dark interface.",
+                        tr("Theme"),
+                        tr("Follow the system appearance or choose light or dark."),
                         self.theme_combo,
                     ),
                     self._setting_row(
-                        "Theme Color",
-                        "Choose the accent color for buttons and highlights.",
+                        tr("Theme Color"),
+                        tr("Choose the accent color for buttons and highlights."),
                         self.accent_combo,
                     ),
                 ]
@@ -200,13 +232,13 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(28, 18, 28, 18)
         layout.setSpacing(12)
 
-        self.restore_defaults_btn = QPushButton("Restore Defaults")
+        self.restore_defaults_btn = QPushButton(tr("Restore Defaults"))
         self.restore_defaults_btn.setObjectName("secondaryButton")
         self.restore_defaults_btn.clicked.connect(self._restore_defaults)
-        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn = QPushButton(tr("Cancel"))
         self.cancel_btn.setObjectName("secondaryButton")
         self.cancel_btn.clicked.connect(self.reject)
-        self.save_btn = QPushButton("Save / Close")
+        self.save_btn = QPushButton(tr("Save / Close"))
         self.save_btn.setObjectName("primaryButton")
         self.save_btn.clicked.connect(self._save_and_accept)
 
@@ -223,33 +255,49 @@ class SettingsDialog(QDialog):
             self.delay_spin.setValue(int(delay_ms))
         except (TypeError, ValueError):
             self.delay_spin.setValue(100)
-        theme = str(self._settings.value("appearance/theme", "Light"))
-        if theme not in THEMES:
-            theme = "Light"
-        accent = str(self._settings.value("appearance/accent", "Blue"))
+        theme = selected_theme(self._settings)
+        accent = str(self._settings.value("appearance/accent", DEFAULT_ACCENT))
         if accent not in ACCENTS:
-            accent = "Blue"
-        self.theme_combo.setCurrentText(theme)
-        self.accent_combo.setCurrentText(accent)
+            accent = DEFAULT_ACCENT
+        self.theme_combo.setCurrentIndex(
+            max(0, self.theme_combo.findData(theme))
+        )
+        self.accent_combo.setCurrentIndex(
+            max(0, self.accent_combo.findData(accent))
+        )
         self._preview_theme()
 
     def _preview_theme(self) -> None:
         appearance = appearance_from_values(
-            self.theme_combo.currentText(),
-            self.accent_combo.currentText(),
+            str(self.theme_combo.currentData() or DEFAULT_THEME),
+            str(self.accent_combo.currentData() or DEFAULT_ACCENT),
         )
         self.setStyleSheet(build_stylesheet(appearance))
 
+    def _on_system_color_scheme_changed(self, *_args) -> None:
+        if self.theme_combo.currentData() == "System":
+            self._preview_theme()
+
     def _restore_defaults(self) -> None:
         self.delay_spin.setValue(100)
-        self.theme_combo.setCurrentText("Light")
-        self.accent_combo.setCurrentText("Blue")
+        self.theme_combo.setCurrentIndex(
+            max(0, self.theme_combo.findData(DEFAULT_THEME))
+        )
+        self.accent_combo.setCurrentIndex(
+            max(0, self.accent_combo.findData(DEFAULT_ACCENT))
+        )
         self._preview_theme()
 
     def _save_and_accept(self) -> None:
         self._settings.setValue("request_delay_ms", self.delay_spin.value())
-        self._settings.setValue("appearance/theme", self.theme_combo.currentText())
-        self._settings.setValue("appearance/accent", self.accent_combo.currentText())
+        self._settings.setValue(
+            "appearance/theme",
+            str(self.theme_combo.currentData() or DEFAULT_THEME),
+        )
+        self._settings.setValue(
+            "appearance/accent",
+            str(self.accent_combo.currentData() or DEFAULT_ACCENT),
+        )
         self.accept()
 
     def request_delay_ms(self) -> int:

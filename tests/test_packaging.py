@@ -23,23 +23,50 @@ from zipfile import ZipFile
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_UI_SVGS = {
+    "paper_spider/ui/assets/check-dark.svg",
+    "paper_spider/ui/assets/check-light.svg",
     "paper_spider/ui/assets/chevron-down-dark.svg",
     "paper_spider/ui/assets/chevron-down-light.svg",
-    "paper_spider/ui/assets/status-abstract-dark.svg",
-    "paper_spider/ui/assets/status-abstract-light.svg",
-    "paper_spider/ui/assets/status-pdf-dark.svg",
-    "paper_spider/ui/assets/status-pdf-light.svg",
+    "paper_spider/ui/assets/chevron-left-dark.svg",
+    "paper_spider/ui/assets/chevron-left-light.svg",
+    "paper_spider/ui/assets/chevron-right-dark.svg",
+    "paper_spider/ui/assets/chevron-right-light.svg",
+    "paper_spider/ui/assets/dash-dark.svg",
+    "paper_spider/ui/assets/dash-light.svg",
+    "paper_spider/ui/assets/filter-dark.svg",
+    "paper_spider/ui/assets/filter-light.svg",
+    "paper_spider/ui/assets/folder-dark.svg",
+    "paper_spider/ui/assets/folder-light.svg",
+    "paper_spider/ui/assets/nav-all-dark.svg",
+    "paper_spider/ui/assets/nav-all-light.svg",
+    "paper_spider/ui/assets/nav-dataset-dark.svg",
+    "paper_spider/ui/assets/nav-dataset-light.svg",
+    "paper_spider/ui/assets/nav-settings-dark.svg",
+    "paper_spider/ui/assets/nav-settings-light.svg",
+    "paper_spider/ui/assets/refresh-dark.svg",
+    "paper_spider/ui/assets/refresh-light.svg",
+    "paper_spider/ui/assets/search-dark.svg",
+    "paper_spider/ui/assets/search-light.svg",
 }
+REQUIRED_UI_PNG = {
+    "paper_spider/ui/assets/app-icon.png",
+}
+REQUIRED_CLI_FILES = {
+    "paper_spider/cli.py",
+    "paper_spider/operations.py",
+}
+REQUIRED_MAN_PAGE = "share/man/man1/paperspider-cli.1"
 
 
 class WheelPackagingTests(unittest.TestCase):
-    def test_wheel_contains_all_required_ui_svg_assets(self) -> None:
+    def test_wheel_contains_required_package_data(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             isolated_root = Path(temp_dir) / "source"
             isolated_root.mkdir()
             for filename in ("pyproject.toml", "README.md", "LICENSE"):
                 shutil.copy2(REPO_ROOT / filename, isolated_root / filename)
             shutil.copytree(REPO_ROOT / "paper_spider", isolated_root / "paper_spider")
+            shutil.copytree(REPO_ROOT / "man", isolated_root / "man")
 
             wheel_dir = Path(temp_dir) / "wheelhouse"
             result = subprocess.run(
@@ -57,6 +84,11 @@ class WheelPackagingTests(unittest.TestCase):
                 wheel_members = set(wheel.namelist())
 
         self.assertEqual(set(), REQUIRED_UI_SVGS - wheel_members)
+        self.assertEqual(set(), REQUIRED_UI_PNG - wheel_members)
+        self.assertEqual(set(), REQUIRED_CLI_FILES - wheel_members)
+        self.assertTrue(
+            any(member.endswith(REQUIRED_MAN_PAGE) for member in wheel_members)
+        )
 
 
 if __name__ == "__main__":

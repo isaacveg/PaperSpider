@@ -24,8 +24,8 @@ class PaperCategory:
     @classmethod
     def from_fields(cls, track: Optional[str], paper_type: Optional[str]) -> "PaperCategory":
         return cls(
-            track=(track or "main").strip() or "main",
-            paper_type=(paper_type or "conference").strip() or "conference",
+            track=track or "main",
+            paper_type=paper_type or "conference",
         )
 
     @property
@@ -55,10 +55,6 @@ class PaperMeta:
     @property
     def paper_type(self) -> str:
         return self.category.paper_type
-
-    @property
-    def category_text(self) -> str:
-        return self.category.label
 
     def to_row(self) -> dict:
         return {

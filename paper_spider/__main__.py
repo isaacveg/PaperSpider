@@ -8,11 +8,13 @@ import sys
 
 from PyQt6.QtWidgets import QApplication
 
+from paper_spider.ui.i18n import install_qt_translations
 from paper_spider.ui.workspace_window import WorkspaceWindow
 
 
 def main() -> None:
     app = QApplication(sys.argv)
+    install_qt_translations(app)
     window = WorkspaceWindow()
     window.show()
     sys.exit(app.exec())

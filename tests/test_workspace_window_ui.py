@@ -6,29 +6,33 @@ import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("PAPERSPIDER_LANG", "en")
 
-from PyQt6.QtCore import QRect, QSize, Qt
-from PyQt6.QtGui import QGuiApplication, QImage, QKeySequence, QPainter, QPalette
+from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtGui import QGuiApplication, QKeySequence
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
     QHeaderView,
     QPushButton,
-    QScrollArea,
     QStyle,
     QStyleOptionComboBox,
     QTableView,
-    QWidget,
 )
 
 from paper_spider.storage import PaperStorage
 from paper_spider.ui.dataset_dialog import SelectionResult
+from paper_spider.ui.filter_dialog import FilterDialog, FilterRow
+from paper_spider.ui.paper_table_model import (
+    ABSTRACT_COLUMN,
+    CHECK_COLUMN,
+    PAPER_COLUMN,
+    PDF_COLUMN,
+)
 from paper_spider.ui.workers import CancelToken
 from paper_spider.ui.workspace_window import (
-    CenteredCheckBoxDelegate,
-    FilterRow,
-    SelectHeaderView,
+    CenteredStatusDelegate,
     WorkspaceWindow,
 )
 from paper_spider.workspace_service import DownloadBatchResult
@@ -136,61 +140,121 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.assertIs(self.window.table_stack.currentWidget(), self.window.empty_state)
         self.assertIn("Fetch", self.window.empty_state.title_label.text())
 
-    def test_workspace_window_uses_native_window_chrome(self) -> None:
-        self.assertFalse(
-            self.window.windowFlags() & Qt.WindowType.FramelessWindowHint
-        )
-        self.assertEqual([], self.window.top_bar.findChildren(QWidget, "windowControls"))
-        self.assertFalse(hasattr(self.window.top_bar, "window_controls"))
+    def test_workspace_can_collapse_and_restore_sidebars(self) -> None:
+        self.window._hide_sidebar()
+        self.assertTrue(self.window.sidebar.isHidden())
+        self.assertFalse(self.window.header.sidebar_toggle_btn.isHidden())
 
-    def test_workspace_resizes_to_laptop_width_without_clipping_filter_controls(self) -> None:
+        self.window._show_sidebar()
+        self.assertFalse(self.window.sidebar.isHidden())
+        self.assertTrue(self.window.header.sidebar_toggle_btn.isHidden())
+
+        self.window._hide_details()
+        self.assertTrue(self.window.details_panel.isHidden())
+        self.assertFalse(self.window.header.details_toggle_btn.isHidden())
+
+        self.window._show_details()
+        self.assertFalse(self.window.details_panel.isHidden())
+        self.assertTrue(self.window.header.details_toggle_btn.isHidden())
+
+    def test_open_dataset_folder_opens_the_dataset_directory(self) -> None:
+        opened = []
+        with patch(
+            "paper_spider.ui.workspace_window.QDesktopServices.openUrl",
+            side_effect=opened.append,
+        ):
+            self.window._open_dataset_folder("iclr", 2025)
+
+        self.assertEqual(1, len(opened))
+        self.assertEqual(
+            os.path.join(self.temp_dir.name, "iclr", "2025"),
+            opened[0].toLocalFile(),
+        )
+
+    def test_delete_active_dataset_moves_it_to_trash_and_clears_state(self) -> None:
+        dataset_path = os.path.join(self.temp_dir.name, "iclr", "2025")
+        self.assertTrue(os.path.isdir(dataset_path))
+
+        with patch(
+            "paper_spider.ui.workspace_window.ask_confirmation",
+            return_value=True,
+        ), patch("paper_spider.ui.workspace_window.show_information"):
+            self.window._delete_dataset("iclr", 2025)
+
+        self.assertFalse(os.path.exists(dataset_path))
+        trash = os.path.join(self.temp_dir.name, ".trash")
+        self.assertTrue(os.path.isdir(trash))
+        self.assertTrue(os.listdir(trash))
+        self.assertIsNone(self.window.storage)
+        self.assertIsNone(self.window.conf)
+        self.assertEqual(0, self.window.paper_model.rowCount())
+
+    def test_sidebar_can_be_resized_and_keeps_labels(self) -> None:
+        self.window.resize(1400, 800)
+        self.window.show()
+        self.app.processEvents()
+        self.window.main_splitter.setSizes([160, 1200])
+        self.app.processEvents()
+
+        self.assertLessEqual(self.window.sidebar.width(), 170)
+        self.assertEqual(
+            "All papers", self.window.sidebar.all_papers_btn.text()
+        )
+        self.assertEqual("Filters", self.window.sidebar.filters_btn.text())
+        self.assertTrue(self.window.sidebar.brand_label.isHidden())
+
+    def test_header_keeps_search_and_filter_on_the_title_row(self) -> None:
+        self.assertIs(
+            self.window.header.search_field.parentWidget(),
+            self.window.header,
+        )
+        self.assertIs(
+            self.window.header.filter_btn.parentWidget(),
+            self.window.header,
+        )
+
+    def test_refresh_dataset_reuses_active_dataset_or_switches(self) -> None:
         self.window.thread_pool.waitForDone()
         self.app.processEvents()
-        self.window.filter_rows[0].mode_combo.setCurrentText("does not contain")
-        self.window.resize(1100, 720)
+        calls: list[str] = []
+        self.window._fetch_list = lambda: calls.append("fetch")
+        self.window._refresh_dataset("iclr", 2025)
+        self.assertEqual(["fetch"], calls)
+
+        calls.clear()
+        self.window._select_dataset = (
+            lambda conf, year, base_dir=None, load=True: calls.append(
+                f"select:{conf}:{year}"
+            )
+        )
+        self.window._refresh_dataset("osdi", 2024)
+        self.assertEqual(["select:osdi:2024", "fetch"], calls)
+
+    def test_paper_rows_use_compact_height(self) -> None:
+        self.assertEqual(
+            50, self.window.table.verticalHeader().defaultSectionSize()
+        )
+
+    def test_workspace_resizes_to_laptop_width_without_clipping_controls(self) -> None:
+        self.window.thread_pool.waitForDone()
+        self.app.processEvents()
+        self.window.resize(1200, 720)
         self.window.show()
         self.app.processEvents()
 
-        self.assertLessEqual(self.window.minimumSizeHint().width(), 1100)
-        self.assertLessEqual(self.window.width(), 1100)
-        self.assertTrue(self.window.workspace_splitter.isCollapsible(0))
-        self.assertTrue(self.window.workspace_splitter.isCollapsible(2))
-        self.assertLessEqual(self.window.workspace_splitter.handleWidth(), 1)
+        self.assertLessEqual(self.window.minimumSizeHint().width(), 1200)
+        self.assertLessEqual(self.window.width(), 1200)
+        self.assertEqual(280, self.window.sidebar.width())
         splitter_sizes = self.window.workspace_splitter.sizes()
-        self.assertGreaterEqual(
-            splitter_sizes[0], self.window.filter_panel.minimumWidth()
-        )
-        self.assertGreater(splitter_sizes[1], splitter_sizes[2])
-        self.assertGreater(splitter_sizes[2], 0)
-
-        filter_right = self.window.filter_panel.contentsRect().right()
-        for control in (
-            self.window.filter_rows[0].field_combo,
-            self.window.filter_rows[0].mode_combo,
-            self.window.filter_rows[0].text_edit,
-        ):
-            right_edge = control.mapTo(self.window.filter_panel, control.rect().bottomRight()).x()
-            self.assertLessEqual(right_edge, filter_right)
-        self.assertEqual(
-            "does not contain", self.window.filter_rows[0].mode_combo.currentText()
-        )
-        self.assertEqual("Any field", self.window.filter_rows[0].field_combo.currentText())
-        for combo in (
-            self.window.filter_rows[0].field_combo,
-            self.window.filter_rows[0].mode_combo,
-        ):
-            self.assertGreaterEqual(combo.width(), required_combo_text_width(combo))
-        self.assertGreaterEqual(
-            self.window.filter_rows[0].mode_combo.width(),
-            self.window.filter_rows[0].mode_combo.minimumSizeHint().width(),
-        )
+        self.assertEqual(2, len(splitter_sizes))
+        self.assertGreater(splitter_sizes[0], splitter_sizes[1])
+        self.assertGreater(splitter_sizes[1], 0)
 
         action_bounds = self.window.action_bar.contentsRect()
         for button in (
             self.window.invert_btn,
             self.window.abstract_btn,
             self.window.pdf_btn,
-            self.window.bib_btn,
             self.window.export_btn,
         ):
             top_left = button.mapTo(self.window.action_bar, button.rect().topLeft())
@@ -210,51 +274,32 @@ class WorkspaceWindowUiTests(unittest.TestCase):
 
         self.assertIs(self.window.table_stack.currentWidget(), self.window.table)
         self.assertIsInstance(self.window.table, QTableView)
-        self.assertEqual(6, self.window.paper_model.columnCount())
+        self.assertEqual(4, self.window.paper_model.columnCount())
         headers = [
             self.window.paper_model.headerData(index, Qt.Orientation.Horizontal)
             for index in range(self.window.paper_model.columnCount())
         ]
-        self.assertEqual(["#", "", "Title", "Category", "Authors", "Status"], headers)
         self.assertEqual(
-            "1",
-            self.window.paper_model.data(
-                self.window.paper_model.index(0, 0),
-                Qt.ItemDataRole.DisplayRole,
-            ),
+            ["", "Papers / authors", "Abstract", "PDF"], headers
         )
         self.assertEqual(
             "First Paper",
             self.window.paper_model.data(
-                self.window.paper_model.index(0, 2),
+                self.window.paper_model.index(0, PAPER_COLUMN),
                 Qt.ItemDataRole.DisplayRole,
             ),
         )
-        status_text = self.window.paper_model.data(
-            self.window.paper_model.index(0, 5),
-            Qt.ItemDataRole.DisplayRole,
-        )
-        self.assertNotIn("💬", status_text)
-        self.assertNotIn("📄", status_text)
         self.assertFalse(
             self.window.paper_model.data(
-                self.window.paper_model.index(0, 5),
+                self.window.paper_model.index(0, ABSTRACT_COLUMN),
                 Qt.ItemDataRole.DecorationRole,
             ).isNull()
         )
-        self.assertEqual("2", self.window.summary_strip.total_value.text())
-        self.assertEqual("1", self.window.summary_strip.pdfs_value.text())
+        self.assertIn("2 papers", self.window.header.subtitle_label.text())
+        self.assertEqual("0 selected", self.window.selected_label.text())
 
     def test_table_hides_implicit_vertical_header(self) -> None:
         self.assertTrue(self.window.table.verticalHeader().isHidden())
-
-    def test_paper_and_header_checkboxes_share_the_column_center(self) -> None:
-        delegate = self.window.table.itemDelegateForColumn(1)
-        self.assertIsInstance(delegate, CenteredCheckBoxDelegate)
-        cell_rect = QRect(10, 4, 42, 28)
-        indicator_rect = delegate.indicator_rect(cell_rect, self.window.table)
-
-        self.assertEqual(cell_rect.center(), indicator_rect.center())
 
     def test_centered_paper_checkbox_remains_clickable(self) -> None:
         self.window.thread_pool.waitForDone()
@@ -262,7 +307,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.window._render_rows(self._rows())
         self.window.show()
         self.app.processEvents()
-        index = self.window.paper_model.index(0, 1)
+        index = self.window.paper_model.index(0, CHECK_COLUMN)
 
         QTest.mouseClick(
             self.window.table.viewport(),
@@ -275,10 +320,28 @@ class WorkspaceWindowUiTests(unittest.TestCase):
     def test_table_gives_title_priority_over_authors(self) -> None:
         header = self.window.table.horizontalHeader()
 
-        self.assertEqual(QHeaderView.ResizeMode.Stretch, header.sectionResizeMode(2))
-        self.assertEqual(QHeaderView.ResizeMode.Fixed, header.sectionResizeMode(4))
-        self.assertEqual(QHeaderView.ResizeMode.ResizeToContents, header.sectionResizeMode(5))
-        self.assertLessEqual(self.window.table.columnWidth(4), 260)
+        self.assertEqual(
+            QHeaderView.ResizeMode.Stretch,
+            header.sectionResizeMode(PAPER_COLUMN),
+        )
+        self.assertEqual(
+            QHeaderView.ResizeMode.Fixed,
+            header.sectionResizeMode(ABSTRACT_COLUMN),
+        )
+        self.assertEqual(
+            QHeaderView.ResizeMode.Fixed,
+            header.sectionResizeMode(PDF_COLUMN),
+        )
+        self.assertLessEqual(header.sectionSize(ABSTRACT_COLUMN), 58)
+        self.assertLessEqual(header.sectionSize(PDF_COLUMN), 46)
+        self.assertIsInstance(
+            self.window.table.itemDelegateForColumn(ABSTRACT_COLUMN),
+            CenteredStatusDelegate,
+        )
+        self.assertIsInstance(
+            self.window.table.itemDelegateForColumn(PDF_COLUMN),
+            CenteredStatusDelegate,
+        )
 
     def test_quick_filter_searches_current_filtered_rows_and_updates_count(self) -> None:
         rows = self._rows()
@@ -293,11 +356,11 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.assertEqual(
             "Second Paper",
             self.window.paper_model.data(
-                self.window.paper_model.index(0, 2),
+                self.window.paper_model.index(0, PAPER_COLUMN),
                 Qt.ItemDataRole.DisplayRole,
             ),
         )
-        self.assertEqual("1", self.window.summary_strip.filtered_value.text())
+        self.assertIn("1 match", self.window.header.subtitle_label.text())
 
     def test_empty_filter_result_does_not_fall_back_to_all_rows(self) -> None:
         rows = self._rows()
@@ -307,36 +370,31 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.window._render_rows(self.window._quick_filtered_rows())
 
         self.assertEqual(0, self.window.paper_model.rowCount())
-        self.assertEqual("0", self.window.summary_strip.filtered_value.text())
+        self.assertIn("0 matches", self.window.header.subtitle_label.text())
 
     def test_quick_filter_is_debounced_and_precomputes_search_text(self) -> None:
         rows = self._rows()
         self.window._prepare_quick_search(rows)
 
         self.assertIn("_quick_search", rows[0])
-        self.assertIs(self.window.quick_filter_edit.parentWidget(), self.window.top_bar)
-        self.assertIs(self.window.summary_strip.parentWidget(), self.window.top_bar)
-        self.assertGreaterEqual(
-            self.window.top_bar.layout().indexOf(self.window.quick_filter_edit), 0
+        self.assertIs(
+            self.window.quick_filter_edit.parentWidget(),
+            self.window.header.search_field,
         )
-        self.assertGreaterEqual(self.window.top_bar.layout().indexOf(self.window.summary_strip), 0)
         self.assertFalse(
-            self.window.table_stack.parentWidget().isAncestorOf(self.window.quick_filter_edit)
+            self.window.table.isAncestorOf(self.window.quick_filter_edit)
         )
         self.assertTrue(self.window.quick_filter_timer.isSingleShot())
         self.assertGreaterEqual(self.window.quick_filter_timer.interval(), 100)
         self.assertEqual(
             QKeySequence.SequenceMatch.ExactMatch,
-            self.window.quick_filter_shortcut.key().matches(QKeySequence.StandardKey.Find),
+            self.window.quick_filter_shortcut.key().matches(
+                QKeySequence.StandardKey.Find
+            ),
         )
 
     def test_select_and_download_controls_share_one_action_row(self) -> None:
-        summary_buttons = self.window.summary_strip.findChildren(QPushButton)
-
-        self.assertEqual([], summary_buttons)
         self.assertEqual("workspaceActionBar", self.window.action_bar.objectName())
-        self.assertFalse(hasattr(self.window, "selection_action_group"))
-        self.assertFalse(hasattr(self.window, "download_action_group"))
         self.assertTrue(
             all(
                 button.parentWidget() is self.window.action_bar
@@ -344,7 +402,6 @@ class WorkspaceWindowUiTests(unittest.TestCase):
                     self.window.invert_btn,
                     self.window.abstract_btn,
                     self.window.pdf_btn,
-                    self.window.bib_btn,
                     self.window.export_btn,
                 )
             )
@@ -360,33 +417,25 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.window._filtered_rows = rows
         self.window._render_rows(rows)
 
-        self.window._toggle_header_selection(1)
+        self.window._toggle_header_selection(CHECK_COLUMN)
         self.assertEqual({"p1", "p2"}, self.window.paper_model.selected_ids())
         self.assertEqual(
             Qt.CheckState.Checked,
             self.window.paper_model.headerData(
-                1,
+                CHECK_COLUMN,
                 Qt.Orientation.Horizontal,
                 Qt.ItemDataRole.CheckStateRole,
             ),
         )
 
-        self.window._toggle_header_selection(1)
+        self.window._toggle_header_selection(CHECK_COLUMN)
         self.assertEqual(set(), self.window.paper_model.selected_ids())
 
     def test_main_buttons_have_readable_theme_roles(self) -> None:
-        secondary_buttons = [
-            self.window.invert_btn,
-            self.window.abstract_btn,
-            self.window.bib_btn,
-        ]
-
-        self.assertTrue(
-            all(button.objectName() == "secondaryButton" for button in secondary_buttons)
-        )
-        self.assertEqual("primaryButton", self.window.pdf_btn.objectName())
-        self.assertEqual("primaryButton", self.window.export_btn.objectName())
-        self.assertNotIn("#edf2f7", self.window.action_bar.styleSheet().lower())
+        self.assertEqual("linkButton", self.window.invert_btn.objectName())
+        self.assertEqual("actionButton", self.window.abstract_btn.objectName())
+        self.assertEqual("actionButton", self.window.pdf_btn.objectName())
+        self.assertEqual("actionButton", self.window.export_btn.objectName())
 
     def test_dataset_dialog_fetch_intent_uses_existing_fetch_flow(self) -> None:
         calls: list[str] = []
@@ -396,13 +445,12 @@ class WorkspaceWindowUiTests(unittest.TestCase):
             base_dir=self.temp_dir.name,
             conf_slug="iclr",
             year=2025,
-            request_delay_ms=100,
             fetch_after_select=True,
         )
 
         with patch(
             "paper_spider.ui.workspace_window.DatasetDialog",
-            lambda _parent: _DialogResult(selection),
+            lambda _parent, **_kwargs: _DialogResult(selection),
         ):
             self.window._open_dataset_dialog()
 
@@ -418,13 +466,12 @@ class WorkspaceWindowUiTests(unittest.TestCase):
             base_dir=self.temp_dir.name,
             conf_slug="iclr",
             year=2025,
-            request_delay_ms=100,
             fetch_after_select=False,
         )
 
         with patch(
             "paper_spider.ui.workspace_window.DatasetDialog",
-            lambda _parent: _DialogResult(selection),
+            lambda _parent, **_kwargs: _DialogResult(selection),
         ):
             self.window._open_dataset_dialog()
 
@@ -443,60 +490,71 @@ class WorkspaceWindowUiTests(unittest.TestCase):
 
         self.assertEqual(["theme"], calls)
 
-    def test_dark_theme_not_overridden_by_light_child_stylesheets(self) -> None:
-        from paper_spider.ui.theme import Appearance, build_stylesheet
+    def test_system_scheme_change_refreshes_theme_only_when_following_system(self) -> None:
+        self.window.paper_model.set_rows(self._rows())
 
-        dark = Appearance(
-            theme="Dark",
-            accent="Blue",
-            accent_color="#0b6bff",
-            background="#111827",
-            surface="#1f2937",
-            surface_alt="#273244",
-            border="#374151",
-            text="#f9fafb",
-            muted="#cbd5e1",
-        )
+        with patch(
+            "paper_spider.ui.workspace_window.selected_theme",
+            return_value="Dark",
+        ), patch(
+            "paper_spider.ui.workspace_window.apply_theme"
+        ) as apply_theme, patch.object(
+            self.window.paper_model, "notify_rows_changed"
+        ) as notify:
+            self.window._on_color_scheme_changed()
+            apply_theme.assert_not_called()
+            notify.assert_not_called()
 
-        self.assertNotIn("#ffffff", self.window.filter_rows[0].styleSheet().lower())
-        self.assertNotIn("#f7f8fa", self.window.findChild(QFrame, "filterSidebar").styleSheet().lower())
-        self.assertNotIn("#fbfcfd", self.window.details_panel.styleSheet().lower())
-        self.assertNotIn("#edf2f7", self.window.action_bar.styleSheet().lower())
-        self.assertIn("#1f2937", build_stylesheet(dark).lower())
+        with patch(
+            "paper_spider.ui.workspace_window.selected_theme",
+            return_value="System",
+        ), patch(
+            "paper_spider.ui.workspace_window.apply_theme"
+        ) as apply_theme, patch.object(
+            self.window.paper_model, "notify_rows_changed"
+        ) as notify:
+            self.window._on_color_scheme_changed()
+            apply_theme.assert_called_once()
+            notify.assert_called_once()
+            self.assertEqual({"p1", "p2"}, notify.call_args.args[0])
 
-    def test_filter_row_reads_as_a_compact_sentence(self) -> None:
+    def test_child_widgets_do_not_override_window_stylesheet(self) -> None:
+        self.assertEqual("", self.window.sidebar.styleSheet())
+        self.assertEqual("", self.window.header.styleSheet())
+        self.assertEqual("", self.window.details_panel.styleSheet())
+        self.assertEqual("", self.window.action_bar.styleSheet())
+
+    def test_filter_row_reads_as_a_single_compact_line(self) -> None:
         row = FilterRow()
 
         self.assertIsInstance(row, QFrame)
         self.assertEqual("filterRuleCard", row.objectName())
-        self.assertEqual(3, row.layout().count())
-        self.assertEqual("papers where", row.sentence_label.text())
-        self.assertIs(row.layout().itemAt(1).widget(), row.criteria_row)
-        self.assertEqual("x", row.remove_btn.text())
-        criteria_layout = row.criteria_row.layout()
-        self.assertLess(
-            criteria_layout.indexOf(row.field_combo),
-            criteria_layout.indexOf(row.mode_combo),
-        )
-        self.assertEqual(row.field_combo.geometry().y(), row.mode_combo.geometry().y())
+        layout = row.layout()
+        self.assertEqual(6, layout.count())
+        self.assertIs(layout.itemAt(0).widget(), row.enable_checkbox)
+        self.assertIs(layout.itemAt(1).widget(), row.role_combo)
+        self.assertIs(layout.itemAt(2).widget(), row.field_combo)
+        self.assertIs(layout.itemAt(3).widget(), row.mode_combo)
+        self.assertIs(layout.itemAt(4).widget(), row.text_edit)
+        self.assertIs(layout.itemAt(5).widget(), row.remove_btn)
+        self.assertEqual("×", row.remove_btn.text())
         self.assertLessEqual(row.role_combo.maximumWidth(), 104)
-        self.assertIs(row.layout().itemAt(2).widget(), row.text_row)
 
-    def test_filter_row_preserves_full_mode_label_at_300_pixels(self) -> None:
+    def test_filter_row_preserves_full_mode_label_at_dialog_width(self) -> None:
         from paper_spider.ui.theme import appearance_from_values, build_stylesheet
 
         for theme in ("Light", "Dark"):
             with self.subTest(theme=theme):
                 row = FilterRow()
                 row.setStyleSheet(
-                    build_stylesheet(appearance_from_values(theme, "Blue"))
+                    build_stylesheet(appearance_from_values(theme, "Forest"))
                 )
                 row.mode_combo.setCurrentText("does not contain")
-                row.resize(300, row.sizeHint().height())
+                row.resize(760, row.sizeHint().height())
                 row.show()
                 self.app.processEvents()
 
-                self.assertEqual(300, row.width())
+                self.assertEqual(760, row.width())
                 self.assertEqual("Any field", row.field_combo.currentText())
                 self.assertEqual("does not contain", row.mode_combo.currentText())
                 for combo in (row.role_combo, row.field_combo, row.mode_combo):
@@ -506,35 +564,6 @@ class WorkspaceWindowUiTests(unittest.TestCase):
                 for control in (row.field_combo, row.mode_combo, row.text_edit):
                     right_edge = control.mapTo(row, control.rect().bottomRight()).x()
                     self.assertLessEqual(right_edge, row.contentsRect().right())
-
-    def test_header_partial_mark_is_visible_in_light_and_dark(self) -> None:
-        from paper_spider.ui.theme import appearance_from_values, build_stylesheet
-
-        for theme in ("Light", "Dark"):
-            with self.subTest(theme=theme):
-                header = SelectHeaderView(Qt.Orientation.Horizontal)
-                header.setStyleSheet(
-                    build_stylesheet(appearance_from_values(theme, "Blue"))
-                )
-                color = header.partial_mark_color()
-                self.assertEqual(
-                    header.palette().color(QPalette.ColorRole.Highlight), color
-                )
-                image = QImage(20, 20, QImage.Format.Format_ARGB32)
-                image.fill(Qt.GlobalColor.transparent)
-                painter = QPainter(image)
-                SelectHeaderView.draw_partial_mark(
-                    painter, QRect(3, 3, 14, 14), color
-                )
-                painter.end()
-
-                center_y = QRect(3, 3, 14, 14).center().y()
-                colored = [
-                    x
-                    for x in range(image.width())
-                    if image.pixelColor(x, center_y).alpha() > 0
-                ]
-                self.assertGreaterEqual(len(colored), 6)
 
     def test_filter_row_roles_use_plain_language_with_legacy_config_values(self) -> None:
         row = FilterRow()
@@ -552,45 +581,47 @@ class WorkspaceWindowUiTests(unittest.TestCase):
             row.role_combo.setCurrentIndex(row.role_combo.findText(label))
             self.assertEqual(internal_value, row.config().role)
 
-    def test_filter_sidebar_has_one_add_rule_entry_and_defaults_to_include(self) -> None:
+    def test_filter_dialog_has_one_add_rule_entry_and_defaults_to_include(self) -> None:
+        dialog = FilterDialog()
         add_rule_buttons = [
             button
-            for button in self.window.findChildren(QPushButton)
+            for button in dialog.findChildren(QPushButton)
             if button.text() == "Add rule"
         ]
 
-        self.assertEqual([self.window.add_filter_btn], add_rule_buttons)
-        self.assertFalse(
-            any(
-                button.text() in {"+Must", "+Should", "+Not"}
-                for button in self.window.findChildren(QPushButton)
-            )
+        self.assertEqual([dialog.add_filter_btn], add_rule_buttons)
+        self.assertEqual(1, len(dialog._rows))
+        self.assertEqual("Include", dialog._rows[0].role_combo.currentText())
+        self.assertEqual("must", dialog._rows[0].config().role)
+        self.assertIn("Include", dialog.hint_label.text())
+        self.assertIn("Prefer", dialog.hint_label.text())
+        self.assertIn("Exclude", dialog.hint_label.text())
+        self.assertTrue(
+            dialog.filter_layout.alignment() & Qt.AlignmentFlag.AlignTop
         )
-        hint = self.window.filter_hint_label.text()
-        self.assertIn("Include", hint)
-        self.assertIn("Prefer", hint)
-        self.assertIn("Exclude", hint)
-        self.assertTrue(self.window.filter_layout.alignment() & Qt.AlignmentFlag.AlignTop)
-        self.window.add_filter_btn.click()
-        self.assertEqual("Include", self.window.filter_rows[-1].role_combo.currentText())
-        self.assertEqual("must", self.window.filter_rows[-1].config().role)
+        dialog.add_filter_btn.click()
+        self.assertEqual(2, len(dialog._rows))
+        self.assertEqual("Include", dialog._rows[-1].role_combo.currentText())
+        self.assertEqual("must", dialog._rows[-1].config().role)
 
     def test_minimum_preferred_controls_require_an_active_valid_prefer_rule(self) -> None:
-        self.assertIsInstance(self.window.filter_scroll, QScrollArea)
-        self.assertEqual("minPreferredRow", self.window.min_preferred_row.objectName())
-        self.assertEqual(2, self.window.min_preferred_row.layout().count())
-        self.assertEqual("Minimum preferred matches", self.window.min_preferred_label.text())
-        self.assertTrue(self.window.min_preferred_row.isHidden())
+        dialog = FilterDialog()
+        self.assertEqual("minPreferredRow", dialog.min_preferred_row.objectName())
+        self.assertEqual(2, dialog.min_preferred_row.layout().count())
+        self.assertEqual(
+            "Minimum preferred matches", dialog.min_preferred_label.text()
+        )
+        self.assertTrue(dialog.min_preferred_row.isHidden())
 
-        row = self.window.filter_rows[0]
+        row = dialog._rows[0]
         row.role_combo.setCurrentIndex(row.role_combo.findText("Prefer"))
-        self.assertTrue(self.window.min_preferred_row.isHidden())
+        self.assertTrue(dialog.min_preferred_row.isHidden())
 
         row.text_edit.setText("systems")
-        self.assertFalse(self.window.min_preferred_row.isHidden())
+        self.assertFalse(dialog.min_preferred_row.isHidden())
 
         row.enable_checkbox.setChecked(False)
-        self.assertTrue(self.window.min_preferred_row.isHidden())
+        self.assertTrue(dialog.min_preferred_row.isHidden())
 
     def test_empty_filter_copy_uses_prefer_language(self) -> None:
         self.window._all_rows = self._rows()
@@ -599,7 +630,6 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.window._update_empty_state()
 
         self.assertIn("minimum Prefer match count", self.window.empty_state.message_label.text())
-        self.assertNotIn("Should", self.window.empty_state.message_label.text())
 
     def test_selection_is_preserved_by_paper_id_after_rerender(self) -> None:
         rows = self._rows()
@@ -607,7 +637,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.window._filtered_rows = rows
         self.window._render_rows(rows)
         self.window.paper_model.setData(
-            self.window.paper_model.index(0, 1),
+            self.window.paper_model.index(0, CHECK_COLUMN),
             Qt.CheckState.Checked,
             Qt.ItemDataRole.CheckStateRole,
         )
@@ -618,7 +648,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.assertEqual(
             Qt.CheckState.Checked,
             self.window.paper_model.data(
-                self.window.paper_model.index(0, 1),
+                self.window.paper_model.index(0, CHECK_COLUMN),
                 Qt.ItemDataRole.CheckStateRole,
             ),
         )
@@ -630,7 +660,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.window._filtered_rows = rows
         self.window._render_rows(rows)
         self.window.paper_model.setData(
-            self.window.paper_model.index(0, 1),
+            self.window.paper_model.index(0, CHECK_COLUMN),
             Qt.CheckState.Checked,
             Qt.ItemDataRole.CheckStateRole,
         )
@@ -644,7 +674,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.assertEqual(
             Qt.CheckState.Unchecked,
             self.window.paper_model.data(
-                self.window.paper_model.index(0, 1),
+                self.window.paper_model.index(0, CHECK_COLUMN),
                 Qt.ItemDataRole.CheckStateRole,
             ),
         )
@@ -659,7 +689,7 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.window._update_details()
 
         self.assertEqual("First Paper", self.window.details_panel.title_label.text())
-        self.assertIn("Alice", self.window.details_panel.meta_label.text())
+        self.assertIn("Alice", self.window.details_panel.authors_label.text())
         self.assertIn("An abstract", self.window.details_panel.abstract_text.toPlainText())
 
     def test_existing_abstract_action_copies_to_clipboard(self) -> None:
@@ -683,20 +713,30 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         opened: list[str] = []
         revealed: list[str] = []
         downloaded_pdf_rows: list[list[dict]] = []
-        exported_bib_rows: list[list[dict]] = []
+        fetched_bib_rows: list[dict] = []
         self.window._open_file = opened.append
         self.window._reveal_in_folder = revealed.append
         self.window._download_pdfs_for_rows = downloaded_pdf_rows.append
-        self.window._export_bibtex_for_rows = exported_bib_rows.append
+        self.window._fetch_bibtex_task = lambda row: (
+            fetched_bib_rows.append(row)
+            or {
+                "bibtex": "@inproceedings{p2}",
+                "paper_id": "p2",
+                "bib_path": "/tmp/p2.bib",
+                "db_path": self.window.storage.paths.db_path,
+            }
+        )
+        self.window._start_worker = (
+            lambda fn, on_done, on_error, *args: on_done(fn(*args))
+        )
 
         self.window.table.setCurrentIndex(self.window.paper_model.index(0, 1))
         self.window._open_current_pdf()
         self.window._reveal_current_pdf()
         self.window._copy_current_bibtex()
-        self.window._reveal_current_bib()
 
         self.assertEqual(["/tmp/first.pdf"], opened)
-        self.assertEqual(["/tmp/first.pdf", "/tmp/first.bib"], revealed)
+        self.assertEqual(["/tmp/first.pdf"], revealed)
         self.assertEqual("@inproceedings{p1}", QGuiApplication.clipboard().text())
 
         self.window.table.setCurrentIndex(self.window.paper_model.index(1, 1))
@@ -704,7 +744,8 @@ class WorkspaceWindowUiTests(unittest.TestCase):
         self.window._copy_current_bibtex()
 
         self.assertEqual([[rows[1]]], downloaded_pdf_rows)
-        self.assertEqual([[rows[1]]], exported_bib_rows)
+        self.assertEqual([rows[1]], fetched_bib_rows)
+        self.assertEqual("@inproceedings{p2}", QGuiApplication.clipboard().text())
 
     def test_double_clicking_row_with_pdf_opens_pdf_file(self) -> None:
         rows = self._rows()
@@ -756,28 +797,49 @@ class WorkspaceWindowUiTests(unittest.TestCase):
 
         self.assertTrue(self.window.quick_filter_edit.hasSelectedText())
 
-    def test_filter_keyword_return_applies_filters(self) -> None:
+    def test_filter_dialog_apply_reloads_papers_and_updates_chips(self) -> None:
+        from PyQt6.QtWidgets import QDialog
+
+        from paper_spider.filtering import FilterConfig
+
         calls: list[str] = []
         self.window._load_papers = lambda force_refresh=False: calls.append("apply")
+        configs = [
+            FilterConfig(True, "all", "contains", "must", "systems")
+        ]
 
-        self.window.filter_rows[0].text_edit.returnPressed.emit()
+        with patch(
+            "paper_spider.ui.workspace_window.FilterDialog"
+        ) as dialog_class:
+            dialog_class.return_value.exec.return_value = (
+                QDialog.DialogCode.Accepted
+            )
+            dialog_class.return_value.filter_configs.return_value = configs
+            dialog_class.return_value.min_should_match.return_value = 0
+            self.window._open_filter_dialog()
 
         self.assertEqual(["apply"], calls)
+        self.assertEqual(configs, self.window._applied_filters)
+        self.assertIn("(1)", self.window.header.filter_btn.text())
 
-    def test_finishing_one_download_keeps_other_cancel_control_visible(self) -> None:
+    def test_finishing_one_download_keeps_cancel_control_visible(self) -> None:
         self.window.abstract_cancel_token = CancelToken()
         self.window.pdf_cancel_token = CancelToken()
         self.window._refresh_download_controls()
 
-        self.assertFalse(self.window.log_panel.cancel_abstracts_btn.isHidden())
-        self.assertFalse(self.window.log_panel.cancel_pdfs_btn.isHidden())
+        self.assertFalse(self.window.log_panel.cancel_btn.isHidden())
+        self.assertIn("abstracts", self.window.log_panel.status_label.text().lower())
+        self.assertIn("PDF", self.window.log_panel.status_label.text())
 
         self.window.abstract_cancel_token = None
         self.window._refresh_download_controls()
 
-        self.assertTrue(self.window.log_panel.cancel_abstracts_btn.isHidden())
-        self.assertFalse(self.window.log_panel.cancel_pdfs_btn.isHidden())
+        self.assertFalse(self.window.log_panel.cancel_btn.isHidden())
         self.assertIn("PDF", self.window.log_panel.status_label.text())
+
+        self.window.pdf_cancel_token = None
+        self.window._refresh_download_controls()
+        self.assertTrue(self.window.log_panel.cancel_btn.isHidden())
 
 
 if __name__ == "__main__":

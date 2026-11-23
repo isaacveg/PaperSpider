@@ -59,6 +59,52 @@ class PaperStorageTests(unittest.TestCase):
         self.assertEqual(["systems"], row["keywords_list"])
         self.assertEqual("Original abstract", row["abstract"])
 
+    def test_get_papers_returns_normalized_rows_by_id(self) -> None:
+        self.storage.upsert_papers(
+            [
+                PaperMeta(
+                    paper_id="paper-1",
+                    title="Paper One",
+                    conf="iclr",
+                    year=2025,
+                    authors=["Alice"],
+                ),
+                PaperMeta(
+                    paper_id="paper-2",
+                    title="Paper Two",
+                    conf="iclr",
+                    year=2025,
+                    authors=["Bob"],
+                ),
+            ]
+        )
+
+        rows = self.storage.get_papers(
+            ["paper-2", "missing", "paper-1", "paper-2"]
+        )
+
+        self.assertEqual({"paper-1", "paper-2"}, set(rows))
+        self.assertEqual("Paper Two", rows["paper-2"]["title"])
+        self.assertEqual(["Alice"], rows["paper-1"]["authors_list"])
+        self.assertEqual({}, self.storage.get_papers([]))
+
+    def test_get_papers_handles_batches_larger_than_sqlite_variable_limit(self) -> None:
+        papers = [
+            PaperMeta(
+                paper_id=f"paper-{index}",
+                title=f"Paper {index}",
+                conf="iclr",
+                year=2025,
+            )
+            for index in range(1001)
+        ]
+        self.storage.upsert_papers(papers)
+
+        rows = self.storage.get_papers(paper.paper_id for paper in papers)
+
+        self.assertEqual(1001, len(rows))
+        self.assertEqual("Paper 1000", rows["paper-1000"]["title"])
+
     def test_update_details_keeps_existing_values_when_fetch_returns_empty_fields(self) -> None:
         self.storage.upsert_papers(
             [

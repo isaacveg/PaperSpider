@@ -270,6 +270,24 @@ class PaperStorage:
             return None
         return self._normalize_row(dict(row))
 
+    def get_papers(self, paper_ids: Iterable[str]) -> dict[str, dict]:
+        ids = list(dict.fromkeys(paper_ids))
+        rows_by_id: dict[str, dict] = {}
+        for start in range(0, len(ids), 500):
+            chunk = ids[start : start + 500]
+            placeholders = ", ".join("?" for _ in chunk)
+            with self._connect() as conn:
+                rows = conn.execute(
+                    f"""
+                    SELECT * FROM papers
+                    WHERE conf = ? AND year = ? AND paper_id IN ({placeholders})
+                    """,
+                    (self.conf_slug, self.year, *chunk),
+                ).fetchall()
+            for row in rows:
+                rows_by_id[row["paper_id"]] = self._normalize_row(dict(row))
+        return rows_by_id
+
     def count_papers(self) -> int:
         with self._connect() as conn:
             row = conn.execute(
@@ -333,20 +351,6 @@ class PaperStorage:
                 (pdf_path, now, paper_id),
             )
 
-    def mark_pdf_missing(self, paper_id: str) -> None:
-        now = str(int(time.time()))
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE papers
-                SET pdf_status = 0,
-                    pdf_path = NULL,
-                    updated_at = ?
-                WHERE paper_id = ?
-                """,
-                (now, paper_id),
-            )
-
     def mark_bib_exported(self, paper_id: str, bibtex: str, bib_path: str) -> None:
         now = str(int(time.time()))
         with self._connect() as conn:
@@ -357,16 +361,4 @@ class PaperStorage:
                 WHERE paper_id = ?
                 """,
                 (bibtex, bib_path, now, paper_id),
-            )
-
-    def mark_bib_missing(self, paper_id: str) -> None:
-        now = str(int(time.time()))
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE papers
-                SET bib_path = NULL, updated_at = ?
-                WHERE paper_id = ?
-                """,
-                (now, paper_id),
             )

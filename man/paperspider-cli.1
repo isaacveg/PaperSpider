@@ -1,0 +1,439 @@
+.TH PAPERSPIDER-CLI 1 "2026-11-23" "PaperSpider 0.1.0" "User Commands"
+.SH NAME
+paperspider-cli \- search, download, and export conference papers from a local PaperSpider library
+.SH SYNOPSIS
+.B paperspider-cli
+[\fIGLOBAL OPTIONS\fR] \fICOMMAND\fR [\fICOMMAND OPTIONS\fR]
+.SH DESCRIPTION
+.B paperspider-cli
+works on the conference paper library created by the PaperSpider desktop
+application.
+It runs directly and exits after one command, so no background server is
+needed.
+.PP
+The library stores each conference year as a SQLite database with downloaded
+PDF and BibTeX files.
+Commands can list conferences and datasets, fetch a paper list, search papers,
+read or download abstracts, download PDFs and BibTeX, and export metadata.
+.PP
+Human-readable data is written to standard output.
+Progress summaries and failures are written to standard error.
+Use
+.B \-\-json
+to make every command emit a single JSON document on standard output.
+.PP
+Commands that fetch or download from the internet are \fBadd\fR,
+\fBdownload\-abstracts\fR, \fBdownload\-pdfs\fR, \fBdownload\-bibtex\fR,
+\fBexport\fR with \fB\-\-format bibtex\fR, and \fBshow\fR with
+\fB\-\-fetch\fR.
+All other operations read only the local library.
+.SH GLOBAL OPTIONS
+Global options may appear before or after the command name.
+.TP
+.BI \-\-base\-dir " DIR"
+Use
+.I DIR
+as the storage folder.
+If omitted, the value of
+.B PAPERSPIDER_BASE_DIR
+is used, then the folder saved by the desktop application, then
+.IR ~/PaperSpider .
+.TP
+.BI \-\-delay\-ms " MS"
+Wait
+.I MS
+milliseconds between web requests.
+The default is
+.BR 100 .
+Valid values are 0 to 10000.
+.TP
+.BR \-j ", " \-\-json
+Print machine-readable JSON instead of text.
+For
+.BR export ,
+the JSON document contains the export content together with its format,
+paper count, path, and failures.
+.TP
+.B \-\-version
+Print the program version and exit.
+.TP
+.BR \-h ", " \-\-help
+Print a command summary and exit.
+.SH COMMANDS
+.SS conferences
+.B paperspider-cli conferences
+[\fB\-\-query\fR \fITEXT\fR]
+.PP
+List conference adapters that can fetch paper lists.
+The output has one line per conference:
+.IP
+.EX
+SLUG<TAB>NAME
+.EE
+.TP
+.BI \-\-query " TEXT"
+Match
+.I TEXT
+case-insensitively against conference names and slugs.
+.SS datasets
+.B paperspider-cli datasets
+.PP
+List conference and year datasets under the base folder.
+Each line contains the conference slug, year, paper count, and path relative to
+the base folder:
+.IP
+.EX
+CONF<TAB>YEAR<TAB>PAPERS<TAB>PATH
+.EE
+.PP
+A dataset exists after
+.B add
+has fetched its paper list.
+.SS add
+.B paperspider-cli add
+.I CONF YEAR
+.PP
+Fetch the paper list for a supported conference and year from the web and
+store it locally.
+An existing dataset is refreshed and paper metadata already downloaded is
+preserved.
+Requires network access.
+.PP
+.I YEAR
+must be between 1980 and 2100.
+The command prints the number of fetched papers, the stored total, and the
+dataset path.
+.SS search
+.B paperspider-cli search
+[\fB\-\-conf\fR \fICONF\fR] [\fB\-\-year\fR \fIYEAR\fR]
+[\fB\-\-query\fR \fITEXT\fR] [\fB\-\-title\fR \fITEXT\fR]
+[\fB\-\-author\fR \fITEXT\fR] [\fB\-\-keyword\fR \fITEXT\fR]
+[\fB\-\-limit\fR \fIN\fR] [\fB\-\-offset\fR \fIN\fR] [\fB\-\-abstract\fR]
+.PP
+Search papers stored in the local library.
+Omit both
+.B \-\-conf
+and
+.B \-\-year
+to search every local dataset.
+Omit only one of them to search all years of a conference or all conferences
+for a year.
+.PP
+Matching papers are sorted by conference, newest year first, then title.
+Each text result contains the paper id and title, a metadata line, and the
+locally stored files.
+.TP
+.BI \-\-conf " CONF"
+Restrict the search to one conference slug.
+.TP
+.BI \-\-year " YEAR"
+Restrict the search to one conference year.
+.TP
+.BI \-\-query " TEXT"
+Free text matched case-insensitively against title, category, authors,
+abstract, and keywords.
+Every whitespace-separated term must match.
+.TP
+.BI \-\-title " TEXT"
+Keep papers whose title contains
+.IR TEXT .
+.TP
+.BI \-\-author " TEXT"
+Keep papers whose authors contain
+.IR TEXT .
+.TP
+.BI \-\-keyword " TEXT"
+Keep papers whose keywords or abstract contain
+.IR TEXT .
+.TP
+.BI \-\-limit " N"
+Return at most
+.I N
+papers.
+The default is 20; the maximum is 200.
+.TP
+.BI \-\-offset " N"
+Skip the first
+.I N
+matches.
+The default is 0.
+.TP
+.B \-\-abstract
+Include the full abstract of each returned paper.
+.SS show
+.B paperspider-cli show
+.I CONF YEAR PAPER_ID
+[\fB\-\-fetch\fR] [\fB\-\-bibtex\fR]
+.PP
+Show title, id, conference, category, authors, keywords, URLs, local file
+paths, and abstract for one paper.
+.TP
+.B \-\-fetch
+Refresh the abstract, authors, PDF URL, and BibTeX from the conference site and
+store the result.
+Requires network access.
+.TP
+.B \-\-bibtex
+Print the cached BibTeX entry when available.
+.SS download\-abstracts
+.B paperspider-cli download\-abstracts
+.I CONF YEAR PAPER_ID
+[\fIPAPER_ID\fR ...]
+.PP
+Fetch missing abstracts and related metadata for one to 200 papers and store
+them locally.
+Papers that already have an abstract are skipped.
+Each downloaded abstract is printed.
+Requires network access.
+The exit status is 1 when any paper fails.
+.SS download\-pdfs
+.B paperspider-cli download\-pdfs
+.I CONF YEAR PAPER_ID
+[\fIPAPER_ID\fR ...]
+.PP
+Download PDFs for one to 200 papers into the dataset
+.B pdf/
+folder.
+Papers whose PDF file already exists are skipped.
+Each downloaded file is printed as:
+.IP
+.EX
+PAPER_ID<TAB>PATH
+.EE
+.PP
+Requires network access.
+The exit status is 1 when any paper fails.
+.SS download\-bibtex
+.B paperspider-cli download\-bibtex
+.I CONF YEAR PAPER_ID
+[\fIPAPER_ID\fR ...]
+.PP
+Download BibTeX for one to 200 papers into the dataset
+.B bib/
+folder and cache the entries in the local database.
+Each file is printed as:
+.IP
+.EX
+PAPER_ID<TAB>PATH
+.EE
+.PP
+Requires network access for entries that are not already cached.
+The exit status is 1 when any paper fails.
+.SS export
+.B paperspider-cli export
+.I CONF YEAR
+[\fIPAPER_ID\fR ...]
+[\fB\-\-format\fR \fIFORMAT\fR] [\fB\-\-no-title\fR]
+[\fB\-\-no-authors\fR] [\fB\-\-abstract\fR] [\fB\-\-save\fR]
+[\fB\-\-filename\fR \fINAME\fR]
+.PP
+Export selected papers, or every paper in the dataset when no paper ids are
+given.
+The export content is written to standard output.
+When
+.B \-\-save
+is used, a copy is also written under the dataset
+.B exports/
+folder and its path is printed to standard error.
+.TP
+.BI \-\-format " FORMAT"
+Choose
+.BR csv ,
+.BR json ,
+.BR txt ,
+or
+.BR bibtex .
+The default is
+.BR csv .
+.B csv
+and
+.B json
+contain the selected fields.
+.B txt
+writes one title per line.
+.B bibtex
+concatenates BibTeX entries and fetches missing entries from the web.
+.TP
+.B \-\-no\-title
+Omit titles from
+.B csv
+and
+.B json
+output.
+.TP
+.B \-\-no\-authors
+Omit authors from
+.B csv
+and
+.B json
+output.
+.TP
+.B \-\-abstract
+Include abstracts in
+.B csv
+and
+.B json
+output.
+.TP
+.B \-\-save
+Also write the export to the dataset
+.B exports/
+folder.
+.TP
+.BI \-\-filename " NAME"
+Base file name for
+.BR \-\-save .
+The format extension is added automatically.
+Unsafe characters are removed.
+.PP
+The exit status is 1 when
+.B \-\-format bibtex
+cannot retrieve an entry for one or more papers.
+.SH ENVIRONMENT
+.TP
+.B PAPERSPIDER_BASE_DIR
+Storage folder used when
+.B \-\-base\-dir
+is not given.
+If it is also unset, the folder saved by the PaperSpider desktop application is
+used, followed by
+.IR ~/PaperSpider .
+.TP
+.B PAPERSPIDER_REQUEST_DELAY_MS
+Delay between web requests in milliseconds.
+The default is 100.
+Integer values are clamped to the range 0 to 10000; invalid values use the
+default.
+The
+.B \-\-delay\-ms
+option overrides this value.
+.SH FILES
+.TP
+.I <base>/<conf>/<year>/papers.sqlite
+Paper metadata, abstracts, and file state for one conference year.
+.TP
+.I <base>/<conf>/<year>/pdf/
+Downloaded PDF files.
+.TP
+.I <base>/<conf>/<year>/bib/
+Downloaded BibTeX files.
+.TP
+.I <base>/<conf>/<year>/exports/
+Files written by
+.BR "export \-\-save" .
+.SH EXIT STATUS
+.TP
+.B 0
+The command completed successfully.
+.TP
+.B 1
+The command failed, or a batch command completed with per-paper failures.
+.TP
+.B 2
+The command line was invalid.
+.TP
+.B 130
+The command was interrupted.
+.SH EXAMPLES
+List available conferences and local datasets:
+.PP
+.nf
+.RS
+paperspider-cli conferences
+paperspider-cli datasets
+.RE
+.fi
+.PP
+Fetch a conference year:
+.PP
+.nf
+.RS
+paperspider-cli add neurips 2024
+.RE
+.fi
+.PP
+Search one dataset or the whole library:
+.PP
+.nf
+.RS
+paperspider-cli search \-\-conf neurips \-\-year 2024 \-\-query diffusion
+paperspider-cli search \-\-year 2024 \-\-author "Hinton" \-\-json
+paperspider-cli search \-\-conf iclr \-\-year 2025 \-\-limit 50 \-\-abstract
+.RE
+.fi
+.PP
+Read one paper and refresh its metadata:
+.PP
+.nf
+.RS
+paperspider-cli show neurips 2024 PAPER_ID
+paperspider-cli show neurips 2024 PAPER_ID \-\-fetch \-\-bibtex
+.RE
+.fi
+.PP
+Download abstracts, PDFs, and BibTeX:
+.PP
+.nf
+.RS
+paperspider-cli download\-abstracts neurips 2024 PAPER_ID
+paperspider-cli download\-pdfs neurips 2024 PAPER_ID1 PAPER_ID2
+paperspider-cli download\-bibtex neurips 2024 PAPER_ID1 PAPER_ID2
+.RE
+.fi
+.PP
+Export metadata or BibTeX:
+.PP
+.nf
+.RS
+paperspider-cli export neurips 2024 \-\-format json \-\-abstract
+paperspider-cli export neurips 2024 \-\-format bibtex \-\-save \-\-filename nips24
+paperspider-cli export iclr 2025 PAPER_ID1 PAPER_ID2 \-\-format csv > papers.csv
+.RE
+.fi
+.PP
+Use a different library folder:
+.PP
+.nf
+.RS
+paperspider-cli \-\-base-dir ~/papers search \-\-query transformer
+PAPERSPIDER_BASE_DIR=~/papers paperspider-cli datasets
+.RE
+.fi
+.SH NOTES
+The Python package installs this page as
+.I share/man/man1/paperspider-cli.1
+under its installation prefix.
+If that location is on the manual page path, read it with:
+.PP
+.nf
+.RS
+man paperspider-cli
+.RE
+.fi
+.PP
+From a source checkout without installation, view it with:
+.PP
+.nf
+.RS
+man ./man/paperspider-cli.1
+.RE
+.fi
+.PP
+On systems where
+.B man
+does not accept a path, use
+.BR "man \-l" .
+To add the page to a user man path:
+.PP
+.nf
+.RS
+mkdir -p ~/.local/share/man/man1
+install \-m 644 man/paperspider-cli.1 ~/.local/share/man/man1/
+.RE
+.fi
+.SH SEE ALSO
+The PaperSpider desktop application, started with \fBpaperspider\fR, and the
+project guides
+.I README.md
+and
+.IR docs/en.md .

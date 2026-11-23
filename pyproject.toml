@@ -28,6 +28,7 @@ dependencies = [
 
 [project.scripts]
 paperspider = "paper_spider.__main__:main"
+paperspider-cli = "paper_spider.cli:entrypoint"
 
 [project.urls]
 Repository = "https://github.com/isaacveg/PaperSpider"
@@ -37,7 +38,14 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["paper_spider", "paper_spider.conferences", "paper_spider.ui"]
+packages = [
+  "paper_spider",
+  "paper_spider.conferences",
+  "paper_spider.ui",
+]
+
+[tool.setuptools.data-files]
+"share/man/man1" = ["man/paperspider-cli.1"]
 
 [tool.setuptools.package-data]
-"paper_spider.ui" = ["assets/*.svg"]
+"paper_spider.ui" = ["assets/*.svg", "assets/*.png"]

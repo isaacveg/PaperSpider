@@ -80,6 +80,7 @@ class WorkspaceService:
     ) -> DownloadBatchResult:
         total = len(rows)
         result = DownloadBatchResult()
+        updated_ids: List[str] = []
         for idx, row in enumerate(rows, start=1):
             if cancelled():
                 result.cancelled = True
@@ -110,9 +111,7 @@ class WorkspaceService:
                 updated.bibtex_url,
                 updated.bibtex,
             )
-            refreshed = storage.get_paper(updated.paper_id)
-            if refreshed:
-                result.updated_rows.append(refreshed)
+            updated_ids.append(updated.paper_id)
             if updated.abstract and updated.abstract.strip():
                 result.succeeded += 1
             else:
@@ -124,6 +123,12 @@ class WorkspaceService:
                     log(f"[{idx}/{total}] abstract: {updated.title}")
                 else:
                     log(f"[{idx}/{total}] missing abstract: {updated.title}")
+        refreshed_rows = storage.get_papers(updated_ids)
+        result.updated_rows = [
+            refreshed_rows[paper_id]
+            for paper_id in updated_ids
+            if paper_id in refreshed_rows
+        ]
         return result
 
     def download_pdfs(
@@ -136,6 +141,7 @@ class WorkspaceService:
     ) -> DownloadBatchResult:
         total = len(rows)
         result = DownloadBatchResult()
+        updated_ids: List[str] = []
         for idx, row in enumerate(rows, start=1):
             if cancelled():
                 result.cancelled = True
@@ -178,12 +184,16 @@ class WorkspaceService:
                     paper.bibtex_url,
                     paper.bibtex,
                 )
-            refreshed = storage.get_paper(paper.paper_id)
-            if refreshed:
-                result.updated_rows.append(refreshed)
+            updated_ids.append(paper.paper_id)
             result.succeeded += 1
             if log:
                 log(f"[{idx}/{total}] {paper.paper_id}")
+        refreshed_rows = storage.get_papers(updated_ids)
+        result.updated_rows = [
+            refreshed_rows[paper_id]
+            for paper_id in updated_ids
+            if paper_id in refreshed_rows
+        ]
         return result
 
     def export_bibtex(

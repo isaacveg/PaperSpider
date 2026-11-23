@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 
 from ..export_utils import build_export_text
 from .dialog_utils import show_warning
+from .i18n import tr
 from .theme import apply_theme
 
 
@@ -29,7 +30,7 @@ class ExportDialog(QDialog):
     def __init__(self, rows: List[dict], parent=None) -> None:
         super().__init__(parent)
         self.rows = rows
-        self.setWindowTitle("Export Selected Papers")
+        self.setWindowTitle(tr("Export Selected Papers"))
         self.resize(760, 520)
         self._build_ui()
         apply_theme(self)
@@ -38,36 +39,38 @@ class ExportDialog(QDialog):
         layout = QGridLayout()
 
         self.format_combo = QComboBox()
-        self.format_combo.addItem("CSV", "csv")
-        self.format_combo.addItem("JSON", "json")
-        self.format_combo.addItem("Plain text list", "txt")
+        self.format_combo.addItem(tr("CSV"), "csv")
+        self.format_combo.addItem(tr("JSON"), "json")
+        self.format_combo.addItem(tr("Plain text list"), "txt")
         self.format_combo.currentIndexChanged.connect(self._on_format_changed)
 
-        self.title_check = QCheckBox("Title")
+        self.title_check = QCheckBox(tr("Title"))
         self.title_check.setChecked(True)
-        self.authors_check = QCheckBox("Authors")
+        self.authors_check = QCheckBox(tr("Authors"))
         self.authors_check.setChecked(True)
-        self.abstract_check = QCheckBox("Abstract")
+        self.abstract_check = QCheckBox(tr("Abstract"))
         self.abstract_check.setChecked(False)
 
-        generate_btn = QPushButton("Generate")
+        generate_btn = QPushButton(tr("Generate"))
         generate_btn.setObjectName("primaryButton")
         generate_btn.clicked.connect(self._generate)
-        self.copy_btn = QPushButton("Copy")
+        self.copy_btn = QPushButton(tr("Copy"))
         self.copy_btn.setObjectName("secondaryButton")
         self.copy_btn.clicked.connect(self._copy)
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr("Close"))
         close_btn.setObjectName("secondaryButton")
         close_btn.clicked.connect(self.accept)
 
         self.output_text = QTextEdit()
-        self.output_text.setPlaceholderText("Generated export content will appear here.")
+        self.output_text.setPlaceholderText(
+            tr("Generated export content will appear here.")
+        )
         self.output_text.textChanged.connect(self._reset_copy_feedback)
         self.title_check.toggled.connect(self._reset_copy_feedback)
         self.authors_check.toggled.connect(self._reset_copy_feedback)
         self.abstract_check.toggled.connect(self._reset_copy_feedback)
 
-        layout.addWidget(QLabel("Format"), 0, 0)
+        layout.addWidget(QLabel(tr("Format")), 0, 0)
         layout.addWidget(self.format_combo, 0, 1)
 
         fields_layout = QHBoxLayout()
@@ -75,7 +78,7 @@ class ExportDialog(QDialog):
         fields_layout.addWidget(self.authors_check)
         fields_layout.addWidget(self.abstract_check)
         fields_layout.addStretch()
-        layout.addWidget(QLabel("Include fields"), 1, 0)
+        layout.addWidget(QLabel(tr("Include fields")), 1, 0)
         layout.addLayout(fields_layout, 1, 1)
 
         buttons = QHBoxLayout()
@@ -98,7 +101,7 @@ class ExportDialog(QDialog):
         self._reset_copy_feedback()
 
     def _reset_copy_feedback(self, *args) -> None:
-        self.copy_btn.setText("Copy")
+        self.copy_btn.setText(tr("Copy"))
 
     def _generate(self) -> None:
         try:
@@ -110,7 +113,9 @@ class ExportDialog(QDialog):
                 include_abstract=self.abstract_check.isChecked(),
             )
         except ValueError as exc:
-            show_warning(self, "Invalid export options", str(exc))
+            show_warning(
+                self, tr("Invalid export options"), tr(str(exc))
+            )
             return
         self.output_text.setPlainText(content)
 
@@ -119,4 +124,4 @@ class ExportDialog(QDialog):
         if not content:
             return
         QGuiApplication.clipboard().setText(content)
-        self.copy_btn.setText("Copied")
+        self.copy_btn.setText(tr("Copied"))

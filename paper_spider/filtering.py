@@ -19,6 +19,15 @@ class FilterConfig:
     value: str
 
 
+_FIELD_KEYS = {
+    "title": "title",
+    "authors": "authors_text",
+    "category": "category_text",
+    "abstract": "abstract",
+    "keywords": "keywords_text",
+}
+
+
 def filter_paper_rows(
     rows: List[dict],
     configs: List[FilterConfig],
@@ -27,28 +36,37 @@ def filter_paper_rows(
     if not configs:
         return list(rows)
 
-    must = [cfg for cfg in configs if _role_key(cfg) == "must"]
-    should = [cfg for cfg in configs if _role_key(cfg) == "should"]
-    must_not = [cfg for cfg in configs if _role_key(cfg) == "must not"]
+    must: List[tuple[FilterConfig, str]] = []
+    should: List[tuple[FilterConfig, str]] = []
+    must_not: List[tuple[FilterConfig, str]] = []
+    for cfg in configs:
+        item = (cfg, cfg.value.lower())
+        role = _role_key(cfg)
+        if role == "must":
+            must.append(item)
+        elif role == "should":
+            should.append(item)
+        elif role == "must not":
+            must_not.append(item)
 
     filtered: List[dict] = []
     for row in rows:
-        if any(_matches(row, cfg) for cfg in must_not):
+        if any(_matches(row, cfg, value) for cfg, value in must_not):
             continue
-        if must and not all(_matches(row, cfg) for cfg in must):
+        if must and not all(_matches(row, cfg, value) for cfg, value in must):
             continue
         if should and min_should_match > 0:
-            match_count = sum(1 for cfg in should if _matches(row, cfg))
+            match_count = sum(
+                1 for cfg, value in should if _matches(row, cfg, value)
+            )
             if match_count < min_should_match:
                 continue
         filtered.append(row)
     return filtered
 
 
-def _matches(row: dict, cfg: FilterConfig) -> bool:
-    value = cfg.value.lower()
-    haystack = _field_text(row, cfg.field)
-    contains = value in haystack
+def _matches(row: dict, cfg: FilterConfig, value: str) -> bool:
+    contains = value in _field_text(row, cfg.field)
     if cfg.mode == "contains":
         return contains
     return not contains
@@ -59,20 +77,16 @@ def _role_key(cfg: FilterConfig) -> str:
 
 
 def _field_text(row: dict, field: str) -> str:
-    title = (row.get("title") or "").lower()
-    category = (row.get("category_text") or "").lower()
-    abstract = (row.get("abstract") or "").lower()
-    authors = (row.get("authors_text") or "").lower()
-    keywords = (row.get("keywords_text") or "").lower()
-
-    if field == "title":
-        return title
-    if field == "authors":
-        return authors
-    if field == "category":
-        return category
-    if field == "abstract":
-        return abstract
-    if field == "keywords":
-        return keywords
-    return " ".join([title, category, authors, abstract, keywords])
+    key = _FIELD_KEYS.get(field)
+    if key is not None:
+        return str(row.get(key) or "").lower()
+    return " ".join(
+        str(row.get(key) or "")
+        for key in (
+            "title",
+            "category_text",
+            "authors_text",
+            "abstract",
+            "keywords_text",
+        )
+    ).lower()

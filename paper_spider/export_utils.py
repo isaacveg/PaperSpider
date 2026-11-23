@@ -68,7 +68,10 @@ def build_export_text(
 def _normalize_row(row: Dict[str, Any]) -> Dict[str, Any]:
     title = _as_text(row.get("title"))
     abstract = _as_text(row.get("abstract"))
-    authors_list = _parse_authors(row.get("authors"))
+    authors_value = row.get("authors_list")
+    if authors_value is None:
+        authors_value = row.get("authors")
+    authors_list = _parse_authors(authors_value)
     return {
         "title": title,
         "abstract": abstract,

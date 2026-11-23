@@ -61,6 +61,24 @@ class ExportUtilsTests(unittest.TestCase):
         self.assertIn("title,abstract", output)
         self.assertIn("Paper A,Abstract A", output)
 
+    def test_export_uses_normalized_author_list_when_available(self) -> None:
+        output = build_export_text(
+            rows=[
+                {
+                    "title": "Paper A",
+                    "authors": "Ignored raw value",
+                    "authors_list": ["Alice", "Bob"],
+                    "abstract": "",
+                }
+            ],
+            export_format="json",
+            include_title=False,
+            include_authors=True,
+            include_abstract=False,
+        )
+
+        self.assertEqual(["Alice", "Bob"], json.loads(output)[0]["authors"])
+
     def test_csv_or_json_requires_fields(self) -> None:
         with self.assertRaises(ValueError):
             build_export_text(
