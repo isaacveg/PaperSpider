@@ -62,6 +62,12 @@ man paperspider-cli
 
 桌面安装包不包含命令行工具，请从 Python 包运行。
 
+## 在 DeepSeek Harness 中使用
+
+仓库内置了 [PaperSpider Skill](.dsh/skills/paperspider/SKILL.md)。将本仓库作为 DeepSeek Harness 工作区打开后即可发现该 Skill。输入 `/paperspider`，或直接让 Agent 查找、下载和导出会议论文；Skill 会引导 Agent 调用 `paperspider-cli`，无需 MCP 或服务器。
+
+如需在其他工作区使用，可将 `paperspider` Skill 目录复制或链接到 `~/.dsh/skills/`。
+
 ## 基本流程
 
 1. 在左侧边栏选择会议数据集，或点击 **+** 添加并抓取新数据集；刷新按钮用于更新选中数据集，选中后可用 **⋯** 打开文件夹或删除。

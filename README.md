@@ -63,6 +63,12 @@ man paperspider-cli
 
 The desktop bundle does not include the CLI; run it from the Python package.
 
+## Use with DeepSeek Harness
+
+The repository includes a [PaperSpider Skill](.dsh/skills/paperspider/SKILL.md). DeepSeek Harness discovers it when this repository is the workspace. Use `/paperspider` or ask the agent to find, download, or export conference papers; the Skill routes those tasks through `paperspider-cli` without MCP or a server.
+
+To make it available in other workspaces, copy or symlink the `paperspider` skill directory into `~/.dsh/skills/`.
+
 ## Basic workflow
 
 1. Pick a conference dataset from the left sidebar, or click **+** to add and fetch one. The refresh button updates the selected dataset; **⋯** opens its folder or deletes it.
