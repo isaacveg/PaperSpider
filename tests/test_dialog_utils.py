@@ -37,6 +37,8 @@ class MessageDialogTests(unittest.TestCase):
         self.assertIsNotNone(close_button)
         self.assertEqual("Close", close_button.text())
         self.assertIs(close_button, box.escapeButton())
+        self.assertEqual("Unable to load", box.text())
+        self.assertEqual("The proceedings page could not be loaded.", box.informativeText())
 
 
 if __name__ == "__main__":

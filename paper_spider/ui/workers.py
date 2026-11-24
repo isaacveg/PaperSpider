@@ -18,6 +18,7 @@ class WorkerSignals(QObject):
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
     log = pyqtSignal(str)
+    progress = pyqtSignal(int, int)
 
 
 class Worker(QRunnable):
@@ -28,16 +29,21 @@ class Worker(QRunnable):
         self.kwargs = kwargs
         self.signals = WorkerSignals()
         try:
-            self._accepts_log = "log" in inspect.signature(fn).parameters
+            parameters = inspect.signature(fn).parameters
         except (TypeError, ValueError):
-            self._accepts_log = False
+            parameters = {}
+        self._callbacks = {
+            name: callback
+            for name, callback in (
+                ("log", self.signals.log.emit),
+                ("progress", self.signals.progress.emit),
+            )
+            if name in parameters
+        }
 
     def run(self) -> None:
         try:
-            if self._accepts_log:
-                result = self.fn(*self.args, **self.kwargs, log=self.signals.log.emit)
-            else:
-                result = self.fn(*self.args, **self.kwargs)
+            result = self.fn(*self.args, **self.kwargs, **self._callbacks)
             self.signals.finished.emit(result)
         except Exception as exc:  # noqa: BLE001
             self.signals.log.emit(traceback.format_exc())

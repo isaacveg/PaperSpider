@@ -9,12 +9,11 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from typing import List, Optional
+from dataclasses import dataclass
+from functools import partial
+from typing import Callable, Dict, List, Optional
 
 from PyQt6.QtCore import (
-    QEvent,
-    QRect,
-    QSettings,
     QSize,
     Qt,
     QThreadPool,
@@ -22,52 +21,37 @@ from PyQt6.QtCore import (
     QUrl,
 )
 from PyQt6.QtGui import (
-    QColor,
     QDesktopServices,
-    QFont,
-    QFontMetrics,
     QGuiApplication,
-    QIcon,
     QKeySequence,
-    QPainter,
-    QPalette,
-    QPen,
     QShortcut,
 )
 from PyQt6.QtWidgets import (
-    QApplication,
     QDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QMainWindow,
+    QMenu,
     QPushButton,
     QSplitter,
     QStackedWidget,
-    QStyle,
-    QStyledItemDelegate,
-    QStyleOptionViewItem,
     QTableView,
     QVBoxLayout,
     QWidget,
 )
 
-from ..artifacts import (
-    safe_filename,
-    unique_artifact_path,
-    write_text_artifact,
-)
 from ..conferences import available_conferences
 from ..datasets import move_dataset_to_trash, scan_datasets
-from ..filtering import FilterConfig
+from ..filtering import FilterConfig, filter_paper_rows, matches_terms, query_terms, search_text
 from ..storage import PaperStorage
 from ..workspace_service import (
     DownloadBatchResult,
     PaperLoadResult,
     WorkspaceService,
-    paper_from_row,
 )
+from .app_settings import app_settings, base_dir as settings_base_dir, request_delay_ms
 from .dataset_dialog import DatasetDialog
 from .dialog_utils import (
     ask_confirmation,
@@ -80,16 +64,29 @@ from .filter_dialog import FilterDialog
 from .i18n import selected_count, tr
 from .paper_table_model import (
     ABSTRACT_COLUMN,
-    AUTHORS_ROLE,
     CHECK_COLUMN,
     PAPER_COLUMN,
     PDF_COLUMN,
     PaperTableModel,
+    row_available,
+    row_title,
 )
 from .settings_dialog import SettingsDialog
+from .table_delegates import (
+    CenteredCheckBoxDelegate,
+    CenteredStatusDelegate,
+    PaperTableView,
+    PaperTitleDelegate,
+    SelectHeaderView,
+    paper_row_height,
+)
 from .theme import apply_theme, selected_theme
 from .workspace_view_helpers import paper_id_for_row, reconcile_selected_ids
 from .workspace_widgets import (
+    SIDEBAR_MAX_WIDTH,
+    SIDEBAR_MIN_WIDTH,
+    SIDEBAR_RAIL_WIDTH,
+    SIDEBAR_SNAP_WIDTH,
     AppSidebar,
     CollapsibleLogPanel,
     DetailsPanel,
@@ -98,219 +95,34 @@ from .workspace_widgets import (
 )
 from .workers import CancelToken, Worker
 
-
-def _checkbox_rect(cell_rect: QRect) -> QRect:
-    size = min(18, max(12, cell_rect.width() - 10), max(12, cell_rect.height() - 10))
-    rect = QRect(0, 0, size, size)
-    rect.moveCenter(cell_rect.center())
-    return rect
+CLOSE_WAIT_MS = 5000
 
 
-def _draw_checkbox(
-    painter,
-    cell_rect: QRect,
-    state: Qt.CheckState,
-    accent: QColor,
-    muted: QColor,
-) -> None:
-    box = _checkbox_rect(cell_rect)
-    checked = state == Qt.CheckState.Checked
-    partial = state == Qt.CheckState.PartiallyChecked
-    painter.save()
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    painter.setPen(QPen(accent if (checked or partial) else muted, 1.3))
-    painter.setBrush(accent if (checked or partial) else Qt.BrushStyle.NoBrush)
-    painter.drawRoundedRect(box.adjusted(1, 1, -1, -1), 4, 4)
-    if checked or partial:
-        check_color = (
-            QColor("#ffffff")
-            if accent.lightness() < 150
-            else QColor("#101712")
-        )
-        pen = QPen(check_color, 2)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        painter.setPen(pen)
-        if checked:
-            painter.drawLine(
-                box.left() + 5,
-                box.center().y(),
-                box.left() + 8,
-                box.bottom() - 5,
-            )
-            painter.drawLine(
-                box.left() + 8,
-                box.bottom() - 5,
-                box.right() - 4,
-                box.top() + 5,
-            )
-        else:
-            painter.drawLine(
-                box.left() + 5,
-                box.center().y(),
-                box.right() - 5,
-                box.center().y(),
-            )
-    painter.restore()
+@dataclass(frozen=True)
+class _DownloadKind:
+    service_method: str
+    artifact: str
+    busy_text: str
+    already_running: str
+    canceling: str
 
 
-class CenteredCheckBoxDelegate(QStyledItemDelegate):
-    """Draw a theme-aware checkbox at the exact center of its table cell."""
-
-    def paint(self, painter, option, index) -> None:
-        view_option = QStyleOptionViewItem(option)
-        self.initStyleOption(view_option, index)
-        state = view_option.checkState
-        view_option.features &= ~QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
-        style = option.widget.style() if option.widget else QApplication.style()
-        style.drawControl(
-            QStyle.ControlElement.CE_ItemViewItem,
-            view_option,
-            painter,
-            option.widget,
-        )
-        if option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(
-                QRect(
-                    option.rect.left(),
-                    option.rect.top(),
-                    3,
-                    option.rect.height(),
-                ),
-                option.palette.color(QPalette.ColorRole.PlaceholderText),
-            )
-        _draw_checkbox(
-            painter,
-            option.rect,
-            state,
-            option.palette.color(QPalette.ColorRole.Link),
-            option.palette.color(QPalette.ColorRole.PlaceholderText),
-        )
-
-    def editorEvent(self, event, model, option, index) -> bool:
-        if not index.flags() & Qt.ItemFlag.ItemIsUserCheckable:
-            return False
-        if event.type() != QEvent.Type.KeyPress or event.key() not in (
-            Qt.Key.Key_Space,
-            Qt.Key.Key_Select,
-        ):
-            return False
-
-        state = index.data(Qt.ItemDataRole.CheckStateRole)
-        next_state = (
-            Qt.CheckState.Unchecked
-            if state == Qt.CheckState.Checked
-            else Qt.CheckState.Checked
-        )
-        return model.setData(index, next_state, Qt.ItemDataRole.CheckStateRole)
-
-
-class PaperTitleDelegate(QStyledItemDelegate):
-    """Paint a bold paper title with a muted author line below it."""
-
-    def sizeHint(self, option, index) -> QSize:
-        hint = super().sizeHint(option, index)
-        hint.setHeight(max(50, hint.height() + 18))
-        return hint
-
-    def paint(self, painter, option, index) -> None:
-        view_option = QStyleOptionViewItem(option)
-        self.initStyleOption(view_option, index)
-        view_option.text = ""
-        style = option.widget.style() if option.widget else QApplication.style()
-        style.drawControl(
-            QStyle.ControlElement.CE_ItemViewItem,
-            view_option,
-            painter,
-            option.widget,
-        )
-        title = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
-        authors = str(index.data(AUTHORS_ROLE) or "")
-        selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        text_color = option.palette.color(
-            QPalette.ColorRole.HighlightedText
-            if selected
-            else QPalette.ColorRole.Text
-        )
-        muted_color = QColor(text_color)
-        muted_color.setAlpha(190)
-        rect = option.rect.adjusted(10, 5, -10, -5)
-        title_font = QFont(option.font)
-        title_font.setBold(True)
-        title_font.setPixelSize(16)
-        author_font = QFont(option.font)
-        author_font.setPixelSize(12)
-        metrics = QFontMetrics(title_font)
-        painter.save()
-        painter.setFont(title_font)
-        painter.setPen(text_color)
-        title_text = metrics.elidedText(
-            title, Qt.TextElideMode.ElideRight, rect.width()
-        )
-        painter.drawText(
-            QRect(rect.left(), rect.top(), rect.width(), 22),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            title_text,
-        )
-        if authors:
-            painter.setFont(author_font)
-            painter.setPen(muted_color)
-            author_metrics = QFontMetrics(author_font)
-            author_text = author_metrics.elidedText(
-                authors, Qt.TextElideMode.ElideRight, rect.width()
-            )
-            painter.drawText(
-                QRect(rect.left(), rect.top() + 22, rect.width(), 18),
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                author_text,
-            )
-        painter.restore()
-
-
-class CenteredStatusDelegate(QStyledItemDelegate):
-    """Center the abstract/PDF availability icon in its column."""
-
-    def paint(self, painter, option, index) -> None:
-        view_option = QStyleOptionViewItem(option)
-        self.initStyleOption(view_option, index)
-        view_option.text = ""
-        view_option.icon = QIcon()
-        style = option.widget.style() if option.widget else QApplication.style()
-        style.drawControl(
-            QStyle.ControlElement.CE_ItemViewItem,
-            view_option,
-            painter,
-            option.widget,
-        )
-        icon = index.data(Qt.ItemDataRole.DecorationRole)
-        if not isinstance(icon, QIcon) or icon.isNull():
-            return
-        size = icon.actualSize(QSize(16, 16))
-        rect = QRect(0, 0, size.width(), size.height())
-        rect.moveCenter(option.rect.center())
-        icon.paint(painter, rect)
-
-
-class SelectHeaderView(QHeaderView):
-    def partial_mark_color(self) -> QColor:
-        return self.palette().color(QPalette.ColorRole.Link)
-
-    def paintSection(self, painter, rect: QRect, logicalIndex: int) -> None:
-        super().paintSection(painter, rect, logicalIndex)
-        if logicalIndex != CHECK_COLUMN or self.model() is None:
-            return
-        state = self.model().headerData(
-            CHECK_COLUMN,
-            Qt.Orientation.Horizontal,
-            Qt.ItemDataRole.CheckStateRole,
-        )
-        _draw_checkbox(
-            painter,
-            rect,
-            state,
-            self.partial_mark_color(),
-            self.palette().color(QPalette.ColorRole.PlaceholderText),
-        )
+_DOWNLOADS: Dict[str, _DownloadKind] = {
+    "abstracts": _DownloadKind(
+        service_method="download_abstracts",
+        artifact="abstracts",
+        busy_text="Downloading abstracts...",
+        already_running="Abstract download already running.",
+        canceling="Canceling abstract download...",
+    ),
+    "pdfs": _DownloadKind(
+        service_method="download_pdfs",
+        artifact="PDFs",
+        busy_text="Downloading PDFs...",
+        already_running="PDF download already running.",
+        canceling="Canceling PDF download...",
+    ),
+}
 
 
 class WorkspaceWindow(QMainWindow):
@@ -325,15 +137,20 @@ class WorkspaceWindow(QMainWindow):
         self._all_rows: List[dict] = []
         self._filtered_rows: List[dict] = []
         self._current_rows: List[dict] = []
-        self.abstract_cancel_token: Optional[CancelToken] = None
-        self.pdf_cancel_token: Optional[CancelToken] = None
-        self._selected_paper_ids: set[str] = set()
-        self._rendering_rows = False
+        self._download_tokens: Dict[str, Optional[CancelToken]] = {
+            kind: None for kind in _DOWNLOADS
+        }
+        self._download_progress: Dict[str, tuple[int, int]] = {}
+        self.fetch_cancel_token: Optional[CancelToken] = None
         self._empty_action = "dataset"
         self._rows_loading = False
         self._pending_row_reload = False
         self._pending_row_refresh = False
+        self._sort_column: Optional[int] = None
+        self._sort_order = Qt.SortOrder.AscendingOrder
         self._sidebar_width = 280
+        self._persist_session = False
+        self._idle_message: Optional[str] = None
         self.setWindowTitle(tr("PaperSpider Workspace"))
         self._build_ui()
         self.resize(1480, 900)
@@ -350,6 +167,8 @@ class WorkspaceWindow(QMainWindow):
         if self.storage:
             self._load_papers(force_refresh=True)
 
+    # ------------------------------------------------------------------ UI
+
     def _build_ui(self) -> None:
         self._applied_filters: List[FilterConfig] = []
         self._min_should_match = 0
@@ -365,7 +184,7 @@ class WorkspaceWindow(QMainWindow):
         self.sidebar.dataset_clicked.connect(self._select_dataset)
         self.sidebar.filters_clicked.connect(self._open_filter_dialog)
         self.sidebar.all_papers_clicked.connect(self._show_all_papers)
-        self.sidebar.collapse_clicked.connect(self._hide_sidebar)
+        self.sidebar.toggle_compact_clicked.connect(self._toggle_sidebar_compact)
         self.sidebar.open_dataset_folder.connect(self._open_dataset_folder)
         self.sidebar.delete_dataset.connect(self._delete_dataset)
         self.sidebar.refresh_dataset.connect(self._refresh_dataset)
@@ -379,7 +198,6 @@ class WorkspaceWindow(QMainWindow):
         self.header = WorkspaceHeader()
         self.header.filter_clicked.connect(self._open_filter_dialog)
         self.header.filter_removed.connect(self._remove_filter_at)
-        self.header.sidebar_toggle_clicked.connect(self._show_sidebar)
         self.header.details_toggle_clicked.connect(self._show_details)
         self.quick_filter_edit = self.header.quick_filter_edit
         self.quick_filter_shortcut = QShortcut(QKeySequence.StandardKey.Find, self)
@@ -392,7 +210,7 @@ class WorkspaceWindow(QMainWindow):
 
         self.paper_model = PaperTableModel(self)
         self.paper_model.selection_changed.connect(self._on_model_selection_changed)
-        self.table = QTableView()
+        self.table = PaperTableView()
         self.table.setModel(self.paper_model)
         self.table.setItemDelegateForColumn(
             CHECK_COLUMN, CenteredCheckBoxDelegate(self.table)
@@ -407,7 +225,6 @@ class WorkspaceWindow(QMainWindow):
             PDF_COLUMN, CenteredStatusDelegate(self.table)
         )
         self.table.verticalHeader().hide()
-        self.table.verticalHeader().setDefaultSectionSize(50)
         self.table.setIconSize(QSize(16, 16))
         self.table.setShowGrid(False)
         self.table.setFrameShape(QFrame.Shape.NoFrame)
@@ -430,8 +247,14 @@ class WorkspaceWindow(QMainWindow):
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_table_context_menu)
         self.table.clicked.connect(self._on_table_clicked)
         self.table.doubleClicked.connect(self._on_table_double_clicked)
+        self.table.row_activated.connect(self._open_row_pdf)
+        self.table.select_all_requested.connect(
+            lambda: self._set_selection_state(True)
+        )
         self.table.selectionModel().currentRowChanged.connect(
             lambda current, _previous: self._update_details(current.row())
         )
@@ -482,7 +305,7 @@ class WorkspaceWindow(QMainWindow):
         center_panel.setLayout(center_layout)
 
         self.details_panel = DetailsPanel()
-        self.details_panel.download_abstract_clicked.connect(
+        self.details_panel.abstract_action_clicked.connect(
             self._download_current_abstract
         )
         self.details_panel.open_pdf_clicked.connect(self._open_current_pdf)
@@ -519,6 +342,7 @@ class WorkspaceWindow(QMainWindow):
         self.main_splitter.setStretchFactor(0, 0)
         self.main_splitter.setStretchFactor(1, 1)
         self.main_splitter.setSizes([280, 1200])
+        self.main_splitter.splitterMoved.connect(self._on_main_splitter_moved)
         root_layout.addWidget(self.main_splitter)
         root.setLayout(root_layout)
         self.setCentralWidget(root)
@@ -528,6 +352,70 @@ class WorkspaceWindow(QMainWindow):
         self._update_summary()
         self._update_empty_state()
         self._refresh_status()
+
+    # ------------------------------------------------------- session state
+
+    def restore_session(self) -> None:
+        """Restore window layout and the last dataset, and persist them on close."""
+
+        self._persist_session = True
+        settings = app_settings()
+        geometry = settings.value("window/geometry")
+        if geometry:
+            self.restoreGeometry(geometry)
+        for key, splitter in (
+            ("window/main_splitter", self.main_splitter),
+            ("window/workspace_splitter", self.workspace_splitter),
+        ):
+            state = settings.value(key)
+            if state:
+                splitter.restoreState(state)
+        if settings.value("window/details_hidden", False, type=bool):
+            self._hide_details()
+        if self.storage is not None:
+            return
+        conf_slug, _, year_text = str(
+            settings.value("session/last_dataset", "") or ""
+        ).partition(":")
+        base = settings_base_dir(settings)
+        if not (conf_slug in self.available_conf_map and year_text.isdigit() and base):
+            return
+        db_path = os.path.join(base, conf_slug, year_text, "papers.sqlite")
+        if os.path.exists(db_path):
+            self._select_dataset(conf_slug, int(year_text), base)
+
+    def _save_session(self) -> None:
+        settings = app_settings()
+        settings.setValue("window/geometry", self.saveGeometry())
+        settings.setValue("window/main_splitter", self.main_splitter.saveState())
+        settings.setValue(
+            "window/workspace_splitter", self.workspace_splitter.saveState()
+        )
+        settings.setValue("window/details_hidden", self.details_panel.isHidden())
+        if self.conf and self.storage:
+            settings.setValue(
+                "session/last_dataset", f"{self.conf.slug}:{self.storage.year}"
+            )
+        else:
+            settings.remove("session/last_dataset")
+
+    def closeEvent(self, event) -> None:
+        if self._network_task_running() and not ask_confirmation(
+            self,
+            tr("Quit PaperSpider?"),
+            tr("Tasks are still running. Cancel them and quit?"),
+            confirm_text=tr("Quit"),
+            cancel_text=tr("Keep running"),
+        ):
+            event.ignore()
+            return
+        self._cancel_all_tasks(quiet=True)
+        if self._persist_session:
+            self._save_session()
+        self.thread_pool.waitForDone(CLOSE_WAIT_MS)
+        super().closeEvent(event)
+
+    # ------------------------------------------------------------ helpers
 
     def _open_file(self, path: str) -> None:
         if not os.path.exists(path):
@@ -548,27 +436,14 @@ class WorkspaceWindow(QMainWindow):
 
     def _log(self, message: str) -> None:
         self.log_panel.append_log(message)
-        progress = self._parse_progress_message(message)
-        if progress:
-            current, total = progress
-            self.log_panel.set_busy(self.status_label.text(), current, total)
 
-    def _parse_progress_message(self, message: str) -> Optional[tuple[int, int]]:
-        if not message.startswith("[") or "/" not in message:
-            return None
-        prefix = message.split("]", 1)[0].lstrip("[")
-        parts = prefix.split("/", 1)
-        if len(parts) != 2:
-            return None
-        try:
-            current = int(parts[0])
-            total = int(parts[1])
-        except ValueError:
-            return None
-        return current, total
+    def _notify(self, message: str) -> None:
+        """Show a non-blocking result message in the task bar."""
 
-    def _selected_count(self) -> int:
-        return len(self._selected_paper_ids)
+        self._log(message)
+        self._idle_message = message
+        if not self._network_task_running() and not self._rows_loading:
+            self.log_panel.set_ready(message)
 
     def _update_summary(self) -> None:
         if self.storage and self.conf:
@@ -576,7 +451,17 @@ class WorkspaceWindow(QMainWindow):
                 len(self._all_rows) if self._all_rows else len(self._current_rows)
             )
             self.header.set_counts(total, len(self._current_rows))
-        self.selected_label.setText(selected_count(self._selected_count()))
+        selected = len(self._selected_paper_ids)
+        hidden = selected - self.paper_model.visible_selected_count()
+        self.selected_label.setText(selected_count(selected, hidden))
+        self._update_action_buttons()
+
+    def _update_action_buttons(self) -> None:
+        idle = not self._rows_loading
+        has_selection = bool(self._selected_paper_ids)
+        for button in (self.abstract_btn, self.pdf_btn, self.export_btn):
+            button.setEnabled(idle and has_selection)
+        self.invert_btn.setEnabled(idle and bool(self._current_rows))
 
     def _update_empty_state(self) -> None:
         if not self.storage or not self.conf:
@@ -624,23 +509,81 @@ class WorkspaceWindow(QMainWindow):
         self.table_stack.setCurrentWidget(self.table)
 
     def _handle_empty_state_action(self) -> None:
-        if self._empty_action == "fetch":
-            self._fetch_list()
-        elif self._empty_action == "clear_filters":
+        if self._empty_action == "clear_filters":
             self._clear_applied_filters()
         elif self._empty_action == "clear_quick_filter":
             self.quick_filter_edit.clear()
         else:
             self._open_dataset_dialog()
 
-    def _capture_selected_ids(self) -> None:
-        self._selected_paper_ids = self.paper_model.selected_ids()
+    # ----------------------------------------------------------- selection
+
+    @property
+    def _selected_paper_ids(self) -> set[str]:
+        return self.paper_model.selected_ids()
+
+    @_selected_paper_ids.setter
+    def _selected_paper_ids(self, paper_ids: set[str]) -> None:
+        self.paper_model.set_selected_ids(paper_ids)
 
     def _on_model_selection_changed(self) -> None:
-        if self._rendering_rows:
-            return
-        self._selected_paper_ids = self.paper_model.selected_ids()
         self._update_summary()
+
+    def _toggle_header_selection(self, section: int) -> None:
+        if section == CHECK_COLUMN:
+            checked = self.paper_model.selection_state() != Qt.CheckState.Checked
+            self._set_selection_state(checked)
+            return
+        self._cycle_sort(section)
+
+    def _set_selection_state(self, checked: bool) -> None:
+        visible_ids = {paper_id_for_row(row) for row in self._current_rows}
+        selected = self._selected_paper_ids
+        if checked:
+            selected |= visible_ids
+        else:
+            selected -= visible_ids
+        self._selected_paper_ids = selected
+
+    def _invert_selection(self) -> None:
+        visible_ids = {paper_id_for_row(row) for row in self._current_rows}
+        self._selected_paper_ids = self._selected_paper_ids ^ visible_ids
+
+    def _selected_rows(self) -> List[dict]:
+        selected = self._selected_paper_ids
+        rows = self._all_rows or self._current_rows
+        return [row for row in rows if paper_id_for_row(row) in selected]
+
+    # ------------------------------------------------------------- sorting
+
+    def _cycle_sort(self, column: int) -> None:
+        if self._sort_column != column:
+            self._sort_column = column
+            self._sort_order = Qt.SortOrder.AscendingOrder
+        elif self._sort_order == Qt.SortOrder.AscendingOrder:
+            self._sort_order = Qt.SortOrder.DescendingOrder
+        else:
+            self._sort_column = None
+        self.paper_model.set_sort_marker(self._sort_column, self._sort_order)
+        self._render_rows(self._quick_filtered_rows())
+
+    def _sorted(self, rows: List[dict]) -> List[dict]:
+        column = self._sort_column
+        if column is None:
+            return rows
+        descending = self._sort_order == Qt.SortOrder.DescendingOrder
+
+        def title_key(row: dict) -> str:
+            return row_title(row).casefold()
+
+        if column == PAPER_COLUMN:
+            return sorted(rows, key=title_key, reverse=descending)
+        return sorted(
+            rows,
+            key=lambda row: (row_available(row, column) == descending, title_key(row)),
+        )
+
+    # ------------------------------------------------------------- details
 
     def _current_row(self) -> Optional[dict]:
         row_idx = self.table.currentIndex().row()
@@ -659,7 +602,7 @@ class WorkspaceWindow(QMainWindow):
 
     def _focus_row(self, row_idx: int) -> None:
         if 0 <= row_idx < len(self._current_rows):
-            self.table.setCurrentIndex(self.paper_model.index(row_idx, 1))
+            self.table.setCurrentIndex(self.paper_model.index(row_idx, PAPER_COLUMN))
             self._update_details(row_idx)
 
     def _copy_bibtex_for_row(self, row: dict) -> None:
@@ -671,9 +614,7 @@ class WorkspaceWindow(QMainWindow):
         if bibtex:
             QGuiApplication.clipboard().setText(bibtex)
             if bib_path:
-                self._log(
-                    tr("Copied bibtex: {path}", path=bib_path)
-                )
+                self._log(tr("Copied bibtex: {path}", path=bib_path))
             else:
                 self._log(tr("Copied bibtex to clipboard"))
 
@@ -682,9 +623,7 @@ class WorkspaceWindow(QMainWindow):
         abstract = row.get("abstract") if row else None
         if abstract:
             QGuiApplication.clipboard().setText(str(abstract))
-            self.details_panel.set_feedback(
-                tr("Abstract copied to clipboard.")
-            )
+            self.details_panel.set_feedback(tr("Abstract copied to clipboard."))
             self._log(tr("Copied abstract to clipboard"))
         elif row:
             self._download_abstracts_for_rows([row])
@@ -697,15 +636,19 @@ class WorkspaceWindow(QMainWindow):
         elif row:
             self._download_pdfs_for_rows([row])
 
+    def _copy_current_title(self) -> None:
+        row = self._current_row()
+        if row:
+            QGuiApplication.clipboard().setText(row_title(row))
+            self._notify(tr("Copied title to clipboard"))
+
     def _copy_current_bibtex(self) -> None:
         row = self._current_row()
         if not row:
             return
         if row.get("bibtex") or row.get("bib_path"):
             self._copy_bibtex_for_row(row)
-            self.details_panel.set_feedback(
-                tr("BibTeX copied to clipboard.")
-            )
+            self.details_panel.set_feedback(tr("BibTeX copied to clipboard."))
             return
         self.log_panel.set_busy(tr("Fetching BibTeX..."), show_cancel=False)
         self._start_worker(
@@ -716,51 +659,23 @@ class WorkspaceWindow(QMainWindow):
         )
 
     def _fetch_bibtex_task(self, row: dict) -> dict:
-        paper = paper_from_row(row, self.conf.slug, self.storage.year)
-        bibtex = self.conf.fetch_bibtex(paper)
-        if not bibtex or not bibtex.strip():
+        saved = self.service.save_bibtex(self.conf, self.storage, row)
+        if not saved:
             raise RuntimeError(tr("BibTeX not found"))
-        bibtex = bibtex.strip()
-        base_name = safe_filename(row.get("title") or "", paper.paper_id)
-        file_path = unique_artifact_path(
-            self.storage.paths.bib_dir,
-            base_name,
-            "bib",
-            paper.paper_id,
-        )
-        write_text_artifact(file_path, bibtex)
-        self.storage.mark_bib_exported(
-            paper.paper_id, bibtex, file_path
-        )
+        bibtex, file_path = saved
         return {
             "bibtex": bibtex,
-            "paper_id": paper.paper_id,
+            "paper_id": row["paper_id"],
             "bib_path": file_path,
             "db_path": self.storage.paths.db_path,
         }
 
     def _on_bibtex_fetched(self, result: dict) -> None:
         self._refresh_download_controls()
-        bibtex = result["bibtex"]
-        QGuiApplication.clipboard().setText(bibtex)
+        QGuiApplication.clipboard().setText(result["bibtex"])
         if self.storage and self.storage.paths.db_path == result["db_path"]:
             refreshed = self.storage.get_paper(result["paper_id"])
-            row = self._current_row()
-            if (
-                row is not None
-                and paper_id_for_row(row) == result["paper_id"]
-            ):
-                if refreshed:
-                    row.clear()
-                    row.update(refreshed)
-                    self._prepare_quick_search([row])
-                else:
-                    row["bibtex"] = bibtex
-                    row["bib_path"] = result["bib_path"]
-                self.paper_model.notify_rows_changed(
-                    {result["paper_id"]}
-                )
-                self._update_details(self.table.currentIndex().row())
+            self._apply_download_updates([refreshed] if refreshed else [])
         self.details_panel.set_feedback(tr("BibTeX copied to clipboard."))
         self._log(tr("Copied bibtex to clipboard"))
 
@@ -774,34 +689,105 @@ class WorkspaceWindow(QMainWindow):
         if pdf_path:
             self._reveal_in_folder(pdf_path)
 
-    def _cancel_abstract_download(self) -> None:
-        if self.abstract_cancel_token:
-            self.abstract_cancel_token.cancel()
-            self._log(tr("Canceling abstract download..."))
+    def _show_table_context_menu(self, pos) -> None:
+        index = self.table.indexAt(pos)
+        if not index.isValid() or index.row() >= len(self._current_rows):
+            return
+        self._focus_row(index.row())
+        row = self._current_rows[index.row()]
+        has_pdf = bool(row.get("pdf_path"))
+        checked = paper_id_for_row(row) in self._selected_paper_ids
+        menu = QMenu(self)
+        actions: Dict[object, Callable[[], None]] = {}
 
-    def _cancel_pdf_download(self) -> None:
-        if self.pdf_cancel_token:
-            self.pdf_cancel_token.cancel()
-            self._log(tr("Canceling PDF download..."))
+        def add(text: str, handler: Callable[[], None], enabled: bool = True) -> None:
+            action = menu.addAction(text)
+            action.setEnabled(enabled)
+            actions[action] = handler
+
+        add(
+            tr("Unselect paper") if checked else tr("Select paper"),
+            lambda: self.paper_model.toggle_checked(index.row()),
+        )
+        menu.addSeparator()
+        add(tr("Open PDF") if has_pdf else tr("Download PDF"), self._open_current_pdf)
+        add(tr("Show in folder"), self._reveal_current_pdf, has_pdf)
+        add(
+            tr("Copy abstract") if row.get("abstract") else tr("Download abstract"),
+            self._download_current_abstract,
+        )
+        menu.addSeparator()
+        add(tr("Copy title"), self._copy_current_title)
+        add(tr("Copy BibTeX"), self._copy_current_bibtex)
+        chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
+        handler = actions.get(chosen)
+        if handler:
+            handler()
+
+    # --------------------------------------------------------------- tasks
+
+    @property
+    def abstract_cancel_token(self) -> Optional[CancelToken]:
+        return self._download_tokens["abstracts"]
+
+    @abstract_cancel_token.setter
+    def abstract_cancel_token(self, token: Optional[CancelToken]) -> None:
+        self._download_tokens["abstracts"] = token
+
+    @property
+    def pdf_cancel_token(self) -> Optional[CancelToken]:
+        return self._download_tokens["pdfs"]
+
+    @pdf_cancel_token.setter
+    def pdf_cancel_token(self, token: Optional[CancelToken]) -> None:
+        self._download_tokens["pdfs"] = token
+
+    def _network_task_running(self) -> bool:
+        return self.fetch_cancel_token is not None or any(
+            token is not None for token in self._download_tokens.values()
+        )
+
+    def _cancel_all_tasks(self, quiet: bool = False) -> None:
+        if self.fetch_cancel_token:
+            self.fetch_cancel_token.cancel()
+            if not quiet:
+                self._log(tr("Canceling paper list fetch..."))
+        for kind, token in self._download_tokens.items():
+            if token:
+                token.cancel()
+                if not quiet:
+                    self._log(tr(_DOWNLOADS[kind].canceling))
 
     def _cancel_active_download(self) -> None:
-        if self.abstract_cancel_token:
-            self._cancel_abstract_download()
-        elif self.pdf_cancel_token:
-            self._cancel_pdf_download()
+        self._cancel_all_tasks()
 
-    def _refresh_download_controls(self, fallback: str = "Ready") -> None:
-        abstract_running = self.abstract_cancel_token is not None
-        pdf_running = self.pdf_cancel_token is not None
-        self.log_panel.show_cancel(abstract_running or pdf_running)
-        if abstract_running and pdf_running:
+    def _refresh_download_controls(self, fallback: Optional[str] = None) -> None:
+        running = [kind for kind, token in self._download_tokens.items() if token]
+        if self.fetch_cancel_token is not None:
+            self.log_panel.set_busy(tr("Fetching paper list..."))
+        elif len(running) == 2:
             self.log_panel.set_busy(tr("Downloading abstracts and PDFs..."))
-        elif abstract_running:
-            self.log_panel.set_busy(tr("Downloading abstracts..."))
-        elif pdf_running:
-            self.log_panel.set_busy(tr("Downloading PDFs..."))
+        elif running:
+            self.log_panel.set_busy(tr(_DOWNLOADS[running[0]].busy_text))
         else:
-            self.log_panel.set_ready(tr(fallback))
+            self.log_panel.set_ready(
+                tr(fallback) if fallback else self._idle_message or tr("Ready")
+            )
+            return
+        self._show_download_progress()
+
+    def _show_download_progress(self) -> None:
+        if not self._download_progress or self.fetch_cancel_token is not None:
+            return
+        current = sum(value for value, _total in self._download_progress.values())
+        total = sum(total for _value, total in self._download_progress.values())
+        self.log_panel.set_busy(self.status_label.text(), current, total)
+
+    def _on_download_progress(self, kind: str, current: int, total: int) -> None:
+        if self._download_tokens.get(kind) is None:
+            return
+        self._download_progress[kind] = (current, total)
+        self._show_download_progress()
 
     def _ensure_ready(self) -> bool:
         if self.storage and self.conf:
@@ -809,11 +795,13 @@ class WorkspaceWindow(QMainWindow):
         show_warning(self, tr("Missing"), tr("Please choose a dataset first."))
         return False
 
-    def _start_worker(self, fn, on_done, on_error, *args) -> None:
+    def _start_worker(self, fn, on_done, on_error, *args, on_progress=None) -> None:
         worker = Worker(fn, *args)
         worker.signals.log.connect(self._log)
         worker.signals.finished.connect(on_done)
         worker.signals.error.connect(on_error)
+        if on_progress is not None:
+            worker.signals.progress.connect(on_progress)
         self.thread_pool.start(worker)
 
     def _refresh_status(self) -> None:
@@ -823,13 +811,12 @@ class WorkspaceWindow(QMainWindow):
             self._update_empty_state()
             self._update_summary()
             return
-        self.header.set_dataset(
-            f"{self.conf.name} {self.storage.year}", ""
-        )
+        self.header.set_dataset(f"{self.conf.name} {self.storage.year}", "")
         self.sidebar.set_active_dataset(self.conf.slug, self.storage.year)
-        self.paper_model.set_selected_ids(self._selected_paper_ids)
         self._update_empty_state()
         self._update_summary()
+
+    # ------------------------------------------------------ theme & layout
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self)
@@ -842,7 +829,7 @@ class WorkspaceWindow(QMainWindow):
             self.conf.request_delay = dialog.request_delay_ms() / 1000.0
 
     def _on_color_scheme_changed(self, *_args) -> None:
-        settings = QSettings("PaperSpider", "PaperSpider")
+        settings = app_settings()
         if selected_theme(settings) != "System":
             return
         apply_theme(self, settings)
@@ -858,71 +845,28 @@ class WorkspaceWindow(QMainWindow):
         if paper_ids:
             self.paper_model.notify_rows_changed(paper_ids)
 
-    def _hide_sidebar(self) -> None:
-        self._sidebar_width = self.sidebar.width()
-        self.sidebar.hide()
-        self.header.set_sidebar_hidden(True)
+    def _on_main_splitter_moved(self, *_args) -> None:
+        """Snap the sidebar to the icon rail or the minimum expanded width."""
 
-    def _show_sidebar(self) -> None:
-        self.sidebar.show()
+        width = self.sidebar.width()
+        if SIDEBAR_RAIL_WIDTH < width < SIDEBAR_MIN_WIDTH:
+            self._set_sidebar_width(
+                SIDEBAR_RAIL_WIDTH if width < SIDEBAR_SNAP_WIDTH else SIDEBAR_MIN_WIDTH
+            )
+        elif width >= SIDEBAR_MIN_WIDTH:
+            self._sidebar_width = width
+
+    def _set_sidebar_width(self, width: int) -> None:
         total = max(1, sum(self.main_splitter.sizes()))
-        width = min(440, max(160, self._sidebar_width))
+        width = min(SIDEBAR_MAX_WIDTH, max(SIDEBAR_RAIL_WIDTH, width))
         self.main_splitter.setSizes([width, max(1, total - width)])
-        self.header.set_sidebar_hidden(False)
 
-    def _open_dataset_folder(self, conf_slug: str, year: int) -> None:
-        base = self._dataset_base_dir()
-        path = os.path.join(base, conf_slug, str(year))
-        if not os.path.isdir(path):
-            show_warning(
-                self, tr("Missing"), tr("Dataset folder not found.")
-            )
-            return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
-
-    def _delete_dataset(self, conf_slug: str, year: int) -> None:
-        base = self._dataset_base_dir()
-        path = os.path.join(base, conf_slug, str(year))
-        if not os.path.isdir(path):
-            show_warning(
-                self, tr("Missing"), tr("Dataset folder not found.")
-            )
-            return
-        if not ask_confirmation(
-            self,
-            tr("Delete dataset"),
-            tr(
-                "This removes all local files for this dataset and moves it "
-                "to .trash. You will need to fetch it again. Continue?"
-            ),
-            confirm_text=tr("Confirm"),
-            cancel_text=tr("Cancel"),
-        ):
-            return
-        if not move_dataset_to_trash(base, path):
-            show_error(self, tr("Error"), tr("Failed to delete dataset."))
-            return
-        if (
-            self.conf
-            and self.storage
-            and self.conf.slug == conf_slug
-            and self.storage.year == year
-        ):
-            self.conf = None
-            self.storage = None
-            self._all_rows = []
-            self._filtered_rows = []
-            self._current_rows = []
-            self._selected_paper_ids.clear()
-            self.paper_model.set_rows([])
-            self.details_panel.set_row(None)
-        self._refresh_dataset_sidebar(base)
-        self._refresh_status()
-        show_information(
-            self,
-            tr("Done"),
-            tr("Dataset deleted. Fetch it again to use it."),
-        )
+    def _toggle_sidebar_compact(self) -> None:
+        if self.sidebar.is_compact():
+            self._set_sidebar_width(max(SIDEBAR_MIN_WIDTH, self._sidebar_width))
+        else:
+            self._sidebar_width = self.sidebar.width()
+            self._set_sidebar_width(SIDEBAR_RAIL_WIDTH)
 
     def _hide_details(self) -> None:
         self.details_panel.hide()
@@ -941,13 +885,58 @@ class WorkspaceWindow(QMainWindow):
         palette = self.palette()
         self.table.setPalette(palette)
         self.table.horizontalHeader().setPalette(palette)
+        self.table.ensurePolished()
+        self.table.verticalHeader().setDefaultSectionSize(
+            paper_row_height(self.table.font())
+        )
         self.table.viewport().update()
+
+    # ------------------------------------------------------------ datasets
+
+    def _open_dataset_folder(self, conf_slug: str, year: int) -> None:
+        base = self._dataset_base_dir()
+        path = os.path.join(base, conf_slug, str(year))
+        if not os.path.isdir(path):
+            show_warning(self, tr("Missing"), tr("Dataset folder not found."))
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _delete_dataset(self, conf_slug: str, year: int) -> None:
+        base = self._dataset_base_dir()
+        path = os.path.join(base, conf_slug, str(year))
+        if not os.path.isdir(path):
+            show_warning(self, tr("Missing"), tr("Dataset folder not found."))
+            return
+        if not ask_confirmation(
+            self,
+            tr("Delete dataset"),
+            tr(
+                "This removes all local files for this dataset and moves it "
+                "to .trash. You will need to fetch it again. Continue?"
+            ),
+            confirm_text=tr("Confirm"),
+            cancel_text=tr("Cancel"),
+        ):
+            return
+        if not move_dataset_to_trash(base, path):
+            show_error(self, tr("Error"), tr("Failed to delete dataset."))
+            return
+        if self._is_active_dataset(conf_slug, year):
+            self.conf = None
+            self.storage = None
+            self._all_rows = []
+            self._filtered_rows = []
+            self._current_rows = []
+            self.paper_model.set_rows([], selected_ids=set())
+            self.details_panel.set_row(None)
+        self._refresh_dataset_sidebar(base)
+        self._refresh_status()
+        self._notify(tr("Dataset deleted. Fetch it again to use it."))
 
     def _dataset_base_dir(self) -> str:
         if self.base_dir:
             return self.base_dir
-        settings = QSettings("PaperSpider", "PaperSpider")
-        return str(settings.value("base_dir", "")).strip()
+        return settings_base_dir(app_settings())
 
     def _refresh_dataset_sidebar(self, base_dir: Optional[str] = None) -> None:
         base = base_dir or self._dataset_base_dir()
@@ -973,6 +962,14 @@ class WorkspaceWindow(QMainWindow):
             )
         self.sidebar.set_datasets(datasets)
 
+    def _is_active_dataset(self, conf_slug: str, year: int) -> bool:
+        return bool(
+            self.conf
+            and self.storage
+            and self.conf.slug == conf_slug
+            and self.storage.year == year
+        )
+
     def _select_dataset(
         self,
         conf_slug: str,
@@ -986,25 +983,22 @@ class WorkspaceWindow(QMainWindow):
             return
         base = base_dir or self._dataset_base_dir()
         if not base:
-            show_warning(
-                self, tr("Missing"), tr("Please choose a base folder first.")
-            )
+            show_warning(self, tr("Missing"), tr("Please choose a base folder first."))
             return
-        settings = QSettings("PaperSpider", "PaperSpider")
-        try:
-            delay_ms = int(settings.value("request_delay_ms", 100))
-        except (TypeError, ValueError):
-            delay_ms = 100
-        conf.request_delay = delay_ms / 1000.0
+        if self._is_active_dataset(conf_slug, year) and base == self.base_dir:
+            return
+        conf.request_delay = request_delay_ms(app_settings()) / 1000.0
+        base_changed = base != self.base_dir
         self.conf = conf
         self.base_dir = base
         self.storage = PaperStorage(base, conf.slug, year)
         self._all_rows = []
         self._filtered_rows = []
         self._current_rows = []
-        self._selected_paper_ids.clear()
+        self.paper_model.set_rows([], selected_ids=set())
         self.details_panel.set_row(None)
-        self._refresh_dataset_sidebar(base)
+        if base_changed or not self.sidebar.has_dataset(conf_slug, year):
+            self._refresh_dataset_sidebar(base)
         self._refresh_status()
         if load:
             self._load_papers(force_refresh=True)
@@ -1030,42 +1024,50 @@ class WorkspaceWindow(QMainWindow):
     def _refresh_dataset(self, conf_slug: str, year: int) -> None:
         if self._rows_loading:
             return
-        if (
-            not self.conf
-            or not self.storage
-            or self.conf.slug != conf_slug
-            or self.storage.year != year
-        ):
-            self._select_dataset(conf_slug, year, load=False)
+        self._select_dataset(conf_slug, year, load=False)
         self._fetch_list()
 
     def _fetch_list(self) -> None:
         if not self._ensure_ready():
             return
+        self.fetch_cancel_token = CancelToken()
         self._set_rows_loading(True, tr("Fetching paper list..."))
+        self.log_panel.show_cancel(True)
         self._start_worker(
             self._fetch_list_task,
             self._on_fetch_done,
-            self._on_worker_error,
+            self._on_fetch_error,
             self.conf,
             self.storage,
+            self.fetch_cancel_token,
         )
         self._log(tr("Fetching paper list..."))
 
-    def _fetch_list_task(self, conf, storage: PaperStorage, log=None) -> int:
-        return self.service.fetch_list(conf, storage)
+    def _fetch_list_task(
+        self, conf, storage: PaperStorage, cancel: CancelToken, log=None
+    ) -> int:
+        return self.service.fetch_list(conf, storage, cancel.cancelled)
 
     def _on_fetch_done(self, count: int) -> None:
-        self._log(tr("Loaded {count} papers", count=count))
-        show_information(
-            self,
-            tr("Done"),
-            tr("Loaded {count} papers", count=count),
-        )
+        self.fetch_cancel_token = None
         self._set_rows_loading(False)
         self._refresh_dataset_sidebar()
         self._refresh_status()
+        self._notify(tr("Loaded {count} papers", count=count))
         self._load_papers(force_refresh=True)
+
+    def _on_fetch_error(self, message: str) -> None:
+        token = self.fetch_cancel_token
+        self.fetch_cancel_token = None
+        self._set_rows_loading(False)
+        if token is not None and token.cancelled():
+            self._notify(tr("Paper list fetch canceled"))
+        else:
+            self._refresh_download_controls("Error")
+            self._report_error(message)
+        self._finish_pending_row_load()
+
+    # ------------------------------------------------------------- filters
 
     def _open_filter_dialog(self) -> None:
         dialog = FilterDialog(
@@ -1108,15 +1110,14 @@ class WorkspaceWindow(QMainWindow):
             self._min_should_match, should_count
         )
 
+    # ---------------------------------------------------------------- rows
+
     def _set_rows_loading(self, loading: bool, message: Optional[str] = None) -> None:
         self._rows_loading = loading
         self.table.setEnabled(not loading)
-        self.abstract_btn.setEnabled(not loading)
-        self.pdf_btn.setEnabled(not loading)
-        self.export_btn.setEnabled(not loading)
         self.quick_filter_edit.setEnabled(not loading)
-        self.invert_btn.setEnabled(not loading)
         self.header.filter_btn.setEnabled(not loading)
+        self._update_action_buttons()
         if loading:
             text = message or tr("Loading papers...")
             self.status_label.setText(text)
@@ -1126,13 +1127,11 @@ class WorkspaceWindow(QMainWindow):
             self._refresh_status()
 
     def _load_papers(self, force_refresh: bool = False) -> None:
-        self._capture_selected_ids()
         if not self.storage:
             self._all_rows = []
             self._filtered_rows = []
-            self.paper_model.set_rows([], selected_ids=set())
             self._current_rows = []
-            self._selected_paper_ids.clear()
+            self.paper_model.set_rows([], selected_ids=set())
             self.details_panel.set_row(None)
             self._update_summary()
             self._update_empty_state()
@@ -1143,19 +1142,18 @@ class WorkspaceWindow(QMainWindow):
             return
 
         configs, min_should_match = self._current_filter_state()
-        cached_rows = None if force_refresh or not self._all_rows else self._all_rows
-        action = (
-            tr("Loading papers...")
-            if cached_rows is None
-            else tr("Applying filters...")
-        )
-        self._set_rows_loading(True, action)
+        if not force_refresh and self._all_rows:
+            self._filtered_rows = filter_paper_rows(
+                self._all_rows, configs, min_should_match
+            )
+            self._render_rows(self._quick_filtered_rows())
+            return
+        self._set_rows_loading(True, tr("Loading papers..."))
         self._start_worker(
             self._load_papers_task,
             self._on_load_papers_done,
             self._on_load_papers_error,
             self.storage,
-            cached_rows,
             configs,
             min_should_match,
         )
@@ -1163,12 +1161,13 @@ class WorkspaceWindow(QMainWindow):
     def _load_papers_task(
         self,
         storage: PaperStorage,
-        cached_rows: Optional[List[dict]],
         configs: List[FilterConfig],
         min_should_match: int,
         log=None,
     ) -> PaperLoadResult:
-        return self.service.load_papers(storage, cached_rows, configs, min_should_match)
+        result = self.service.load_papers(storage, None, configs, min_should_match)
+        self._prepare_quick_search(result.all_rows)
+        return result
 
     def _schedule_quick_filter(self) -> None:
         self.quick_filter_timer.start()
@@ -1178,51 +1177,35 @@ class WorkspaceWindow(QMainWindow):
         self.quick_filter_edit.selectAll()
 
     def _apply_quick_filter(self) -> None:
-        self._capture_selected_ids()
         self._render_rows(self._quick_filtered_rows())
 
     def _prepare_quick_search(self, rows: List[dict]) -> None:
         for row in rows:
-            row["_quick_search"] = " ".join(
-                str(row.get(key) or "")
-                for key in (
-                    "title",
-                    "category_text",
-                    "authors_text",
-                    "abstract",
-                    "keywords_text",
-                )
-            ).casefold()
+            row["_quick_search"] = search_text(row)
 
     def _quick_filtered_rows(self) -> List[dict]:
         rows = self._filtered_rows if self._all_rows else []
-        query = self.quick_filter_edit.text().strip().casefold()
-        if not query:
-            return list(rows)
-        terms = query.split()
-        return [row for row in rows if self._row_matches_quick_filter(row, terms)]
+        terms = query_terms(self.quick_filter_edit.text())
+        if terms:
+            rows = [row for row in rows if self._row_matches_quick_filter(row, terms)]
+        return self._sorted(list(rows))
 
     def _row_matches_quick_filter(self, row: dict, terms: List[str]) -> bool:
         haystack = row.get("_quick_search")
         if not haystack:
             self._prepare_quick_search([row])
             haystack = row.get("_quick_search") or ""
-        return all(term in haystack for term in terms)
+        return matches_terms(haystack, terms)
 
     def _render_rows(self, rows: List[dict]) -> None:
-        self._selected_paper_ids = reconcile_selected_ids(
-            rows,
-            self._selected_paper_ids,
-        )
+        current_id = paper_id_for_row(self._current_row() or {})
         self._current_rows = rows
-        self._rendering_rows = True
-        try:
-            self.paper_model.set_rows(
-                rows,
-                selected_ids=self._selected_paper_ids,
-            )
-        finally:
-            self._rendering_rows = False
+        self.paper_model.set_rows(rows)
+        row_idx = self.paper_model.row_for_paper(current_id) if current_id else -1
+        if row_idx >= 0:
+            index = self.paper_model.index(row_idx, PAPER_COLUMN)
+            self.table.setCurrentIndex(index)
+            self.table.scrollTo(index, QTableView.ScrollHint.EnsureVisible)
         self._update_summary()
         self._update_empty_state()
         self._update_details(self.table.currentIndex().row())
@@ -1241,8 +1224,10 @@ class WorkspaceWindow(QMainWindow):
             self._finish_pending_row_load()
             return
         self._all_rows = result.all_rows
-        self._prepare_quick_search(self._all_rows)
         self._filtered_rows = result.filtered_rows
+        self.paper_model.set_selected_ids(
+            reconcile_selected_ids(self._all_rows, self._selected_paper_ids)
+        )
         self._render_rows(self._quick_filtered_rows())
         self._log(
             tr(
@@ -1256,197 +1241,95 @@ class WorkspaceWindow(QMainWindow):
 
     def _on_load_papers_error(self, message: str) -> None:
         self._set_rows_loading(False)
-        show_error(self, tr("Error"), message)
-        self._log(tr("Error: {message}", message=message))
+        self._report_error(message)
         self._finish_pending_row_load()
 
-    def _on_table_double_clicked(self, index) -> None:
-        row_idx = index.row()
-        if row_idx >= len(self._current_rows):
+    def _open_row_pdf(self, row_idx: int) -> None:
+        if not 0 <= row_idx < len(self._current_rows):
             return
         self._update_details(row_idx)
-        row = self._current_rows[row_idx]
-        pdf_path = row.get("pdf_path")
+        pdf_path = self._current_rows[row_idx].get("pdf_path")
         if pdf_path:
             self._open_file(str(pdf_path))
 
+    def _on_table_double_clicked(self, index) -> None:
+        self._open_row_pdf(index.row())
+
     def _on_table_clicked(self, index) -> None:
         if index.column() == CHECK_COLUMN:
-            state = index.data(Qt.ItemDataRole.CheckStateRole)
-            next_state = (
-                Qt.CheckState.Unchecked
-                if state == Qt.CheckState.Checked
-                else Qt.CheckState.Checked
-            )
-            self.paper_model.setData(
-                index,
-                next_state,
-                Qt.ItemDataRole.CheckStateRole,
-            )
+            self.paper_model.toggle_checked(index.row())
         self._update_details(index.row())
 
-    def _toggle_header_selection(self, section: int) -> None:
-        if section != CHECK_COLUMN:
-            return
-        checked = self.paper_model.selection_state() != Qt.CheckState.Checked
-        self._set_selection_state(checked)
-
-    def _set_selection_state(self, checked: bool) -> None:
-        visible_ids = {paper_id_for_row(row) for row in self._current_rows}
-        if checked:
-            self._selected_paper_ids.update(visible_ids)
-        else:
-            self._selected_paper_ids.difference_update(visible_ids)
-        self.paper_model.set_selected_ids(self._selected_paper_ids)
-        self._update_summary()
-
-    def _invert_selection(self) -> None:
-        for row in self._current_rows:
-            paper_id = paper_id_for_row(row)
-            if paper_id in self._selected_paper_ids:
-                self._selected_paper_ids.discard(paper_id)
-            else:
-                self._selected_paper_ids.add(paper_id)
-        self.paper_model.set_selected_ids(self._selected_paper_ids)
-        self._update_summary()
-
-    def _selected_rows(self) -> List[dict]:
-        self._capture_selected_ids()
-        selected = []
-        for row in self._current_rows:
-            if paper_id_for_row(row) in self._selected_paper_ids:
-                selected.append(row)
-        return selected
-
     def _open_export_dialog(self) -> None:
-        selected = self._selected_rows()
-        if not selected:
-            show_information(self, tr("Select"), tr("Please select papers first."))
-            return
-        dialog = ExportDialog(selected, self)
-        dialog.exec()
+        ExportDialog(self._selected_rows(), self).exec()
+
+    # ----------------------------------------------------------- downloads
 
     def _download_abstracts(self) -> None:
-        if self.abstract_cancel_token:
-            show_information(
-                self,
-                tr("Busy"),
-                tr(
-                    "Abstract download already running. Use the cancel control in the status bar."
-                ),
-            )
-            return
-        if not self._ensure_ready():
-            return
-        selected = self._selected_rows()
-        if not selected:
-            show_information(self, tr("Select"), tr("Please select papers first."))
-            return
-        self._download_abstracts_for_rows(selected)
-
-    def _download_abstracts_for_rows(self, rows: List[dict]) -> None:
-        if not self._ensure_ready():
-            return
-        if self.abstract_cancel_token:
-            show_information(
-                self, tr("Busy"), tr("Abstract download already running.")
-            )
-            return
-        self.abstract_cancel_token = CancelToken()
-        self._refresh_download_controls()
-        self.log_panel.set_busy(
-            tr("Downloading abstracts..."), 0, len(rows)
-        )
-        self.log_panel.show_cancel(True)
-        self._start_worker(
-            self._download_abstracts_task,
-            self._on_abstracts_done,
-            self._on_abstracts_error,
-            self.conf,
-            self.storage,
-            rows,
-            self.abstract_cancel_token,
-        )
-        self._log(tr("Downloading abstracts..."))
-
-    def _download_abstracts_task(
-        self,
-        conf,
-        storage: PaperStorage,
-        rows: List[dict],
-        cancel: CancelToken,
-        log=None,
-    ) -> DownloadBatchResult:
-        return self.service.download_abstracts(conf, storage, rows, cancel.cancelled, log=log)
-
-    def _on_abstracts_done(self, result: DownloadBatchResult) -> None:
-        cancelled = result.cancelled or (
-            self.abstract_cancel_token.cancelled() if self.abstract_cancel_token else False
-        )
-        self.abstract_cancel_token = None
-        self._refresh_download_controls()
-        self._apply_download_updates(result.updated_rows)
-        self._show_download_result("abstracts", result, cancelled)
+        self._download_selected("abstracts")
 
     def _download_pdfs(self) -> None:
-        if self.pdf_cancel_token:
-            show_information(
-                self,
-                tr("Busy"),
-                tr(
-                    "PDF download already running. Use the cancel control in the status bar."
-                ),
-            )
-            return
-        if not self._ensure_ready():
-            return
-        selected = self._selected_rows()
-        if not selected:
-            show_information(self, tr("Select"), tr("Please select papers first."))
-            return
-        self._download_pdfs_for_rows(selected)
+        self._download_selected("pdfs")
+
+    def _download_abstracts_for_rows(self, rows: List[dict]) -> None:
+        self._start_download("abstracts", rows)
 
     def _download_pdfs_for_rows(self, rows: List[dict]) -> None:
-        if not self._ensure_ready():
+        self._start_download("pdfs", rows)
+
+    def _download_selected(self, kind: str) -> None:
+        self._start_download(kind, self._selected_rows())
+
+    def _start_download(self, kind: str, rows: List[dict]) -> None:
+        spec = _DOWNLOADS[kind]
+        if self._download_tokens[kind]:
+            show_information(self, tr("Busy"), tr(spec.already_running))
             return
-        if self.pdf_cancel_token:
-            show_information(
-                self, tr("Busy"), tr("PDF download already running.")
-            )
-            return
-        self.pdf_cancel_token = CancelToken()
+        token = CancelToken()
+        self._download_tokens[kind] = token
+        self._download_progress[kind] = (0, len(rows))
         self._refresh_download_controls()
-        self.log_panel.set_busy(tr("Downloading PDFs..."), 0, len(rows))
         self.log_panel.show_cancel(True)
         self._start_worker(
-            self._download_pdfs_task,
-            self._on_pdfs_done,
-            self._on_pdfs_error,
+            self._download_task,
+            partial(self._on_download_done, kind),
+            partial(self._on_download_error, kind),
+            kind,
             self.conf,
             self.storage,
             rows,
-            self.pdf_cancel_token,
+            token,
+            on_progress=partial(self._on_download_progress, kind),
         )
-        self._log(tr("Downloading PDFs..."))
+        self._log(tr(spec.busy_text))
 
-    def _download_pdfs_task(
+    def _download_task(
         self,
+        kind: str,
         conf,
         storage: PaperStorage,
         rows: List[dict],
         cancel: CancelToken,
         log=None,
+        progress=None,
     ) -> DownloadBatchResult:
-        return self.service.download_pdfs(conf, storage, rows, cancel.cancelled, log=log)
+        method = getattr(self.service, _DOWNLOADS[kind].service_method)
+        return method(conf, storage, rows, cancel.cancelled, log=log, progress=progress)
 
-    def _on_pdfs_done(self, result: DownloadBatchResult) -> None:
-        cancelled = result.cancelled or (
-            self.pdf_cancel_token.cancelled() if self.pdf_cancel_token else False
-        )
-        self.pdf_cancel_token = None
+    def _on_download_done(self, kind: str, result: DownloadBatchResult) -> None:
+        token = self._download_tokens[kind]
+        cancelled = result.cancelled or (token.cancelled() if token else False)
+        self._download_tokens[kind] = None
+        self._download_progress.pop(kind, None)
         self._refresh_download_controls()
         self._apply_download_updates(result.updated_rows)
-        self._show_download_result("PDFs", result, cancelled)
+        self._show_download_result(kind, result, cancelled)
+
+    def _on_download_error(self, kind: str, message: str) -> None:
+        self._download_tokens[kind] = None
+        self._download_progress.pop(kind, None)
+        self._refresh_download_controls("Error")
+        self._report_error(message)
 
     def _apply_download_updates(self, updated_rows: List[dict]) -> None:
         if not updated_rows:
@@ -1454,30 +1337,25 @@ class WorkspaceWindow(QMainWindow):
             self._update_details(self.table.currentIndex().row())
             return
         active_id = paper_id_for_row(self._current_row() or {})
-        updates = {paper_id_for_row(row): row for row in updated_rows if paper_id_for_row(row)}
-        for rows in (self._all_rows, self._filtered_rows, self._current_rows):
-            for row in rows:
-                paper_id = paper_id_for_row(row)
-                if paper_id in updates:
-                    row.clear()
-                    row.update(updates[paper_id])
-                    self._prepare_quick_search([row])
+        updates = {paper_id_for_row(row): row for row in updated_rows}
+        # Filtered and visible rows reference the same dicts as _all_rows.
+        for row in self._all_rows or self._current_rows:
+            update = updates.get(paper_id_for_row(row))
+            if update is not None:
+                row.clear()
+                row.update(update)
+                self._prepare_quick_search([row])
         self.paper_model.notify_rows_changed(set(updates))
-        self.paper_model.set_selected_ids(self._selected_paper_ids)
         self._update_summary()
-        if active_id:
-            for row_idx, row in enumerate(self._current_rows):
-                if paper_id_for_row(row) == active_id:
-                    self._focus_row(row_idx)
-                    break
-            else:
-                self._update_details(self.table.currentIndex().row())
+        row_idx = self.paper_model.row_for_paper(active_id) if active_id else -1
+        if row_idx >= 0:
+            self._focus_row(row_idx)
         else:
             self._update_details(self.table.currentIndex().row())
 
     def _show_download_result(
         self,
-        artifact_name: str,
+        kind: str,
         result: DownloadBatchResult,
         cancelled: bool,
     ) -> None:
@@ -1487,7 +1365,7 @@ class WorkspaceWindow(QMainWindow):
             title = tr("Finished with issues")
         else:
             title = tr("Done")
-        artifact = tr("abstracts") if artifact_name == "abstracts" else tr("PDFs")
+        artifact = tr(_DOWNLOADS[kind].artifact)
         parts = [
             tr(
                 "Downloaded {count} {artifact}",
@@ -1496,12 +1374,10 @@ class WorkspaceWindow(QMainWindow):
             )
         ]
         if result.skipped:
-            parts.append(
-                tr("Skipped {count} already available", count=result.skipped)
-            )
+            parts.append(tr("Skipped {count} already available", count=result.skipped))
         if result.failures:
             parts.append(tr("Failed {count}", count=len(result.failures)))
-            for failure in result.failures[:5]:
+            for failure in result.failures:
                 self._log(
                     tr(
                         "Failed {artifact}: {title} ({message})",
@@ -1510,23 +1386,9 @@ class WorkspaceWindow(QMainWindow):
                         message=failure.message,
                     )
                 )
-        show_information(self, title, "\n".join(parts))
+            self.log_panel.expand_log()
+        self._notify(f"{title}: " + " · ".join(parts))
 
     def _report_error(self, message: str) -> None:
         show_error(self, tr("Error"), message)
         self._log(tr("Error: {message}", message=message))
-
-    def _on_worker_error(self, message: str) -> None:
-        self._set_rows_loading(False)
-        self._refresh_download_controls("Error")
-        self._report_error(message)
-
-    def _on_abstracts_error(self, message: str) -> None:
-        self.abstract_cancel_token = None
-        self._refresh_download_controls("Error")
-        self._report_error(message)
-
-    def _on_pdfs_error(self, message: str) -> None:
-        self.pdf_cancel_token = None
-        self._refresh_download_controls("Error")
-        self._report_error(message)

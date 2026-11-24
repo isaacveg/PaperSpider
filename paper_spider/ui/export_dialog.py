@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..export_utils import build_export_text
-from .dialog_utils import show_warning
+from .dialog_utils import configure_utility_dialog, finish_utility_dialog, show_warning
 from .i18n import tr
 from .theme import apply_theme
 
@@ -29,6 +29,7 @@ from .theme import apply_theme
 class ExportDialog(QDialog):
     def __init__(self, rows: List[dict], parent=None) -> None:
         super().__init__(parent)
+        configure_utility_dialog(self)
         self.rows = rows
         self.setWindowTitle(tr("Export Selected Papers"))
         self.resize(760, 520)
@@ -62,6 +63,8 @@ class ExportDialog(QDialog):
         close_btn.clicked.connect(self.accept)
 
         self.output_text = QTextEdit()
+        self.output_text.setObjectName("exportOutput")
+        self.output_text.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         self.output_text.setPlaceholderText(
             tr("Generated export content will appear here.")
         )
@@ -89,7 +92,10 @@ class ExportDialog(QDialog):
         layout.addLayout(buttons, 2, 0, 1, 2)
 
         layout.addWidget(self.output_text, 3, 0, 1, 2)
-        self.setLayout(layout)
+        layout.setContentsMargins(20, 16, 20, 18)
+        layout.setHorizontalSpacing(12)
+        layout.setVerticalSpacing(12)
+        finish_utility_dialog(self, layout)
         self._generate()
 
     def _on_format_changed(self, *args) -> None:

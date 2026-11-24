@@ -46,7 +46,6 @@ _ZH = {
     "Cancel": "取消",
     "Confirm": "确认",
     "Loading papers...": "正在加载论文...",
-    "Applying filters...": "正在应用筛选...",
     "Fetching paper list...": "正在抓取论文列表...",
     "Downloading abstracts...": "正在下载摘要...",
     "Downloading PDFs...": "正在下载 PDF...",
@@ -62,7 +61,6 @@ _ZH = {
     "Select a base folder, conference, and year before fetching papers.": "请先选择基础目录、会议和年份，再抓取论文。",
     "Open Datasets and fetch the paper list before browsing papers.": "请打开数据集并抓取论文列表后再浏览。",
     "Unknown authors": "未知作者",
-    "Uncategorized": "未分类",
     "No paper selected": "未选择论文",
     "Select a row to preview details.": "选择一篇论文查看详情。",
     "Abstract will appear here when available.": "摘要下载后会显示在这里。",
@@ -71,7 +69,6 @@ _ZH = {
     "Open PDF": "打开 PDF",
     "Download PDF": "下载 PDF",
     "Copy BibTeX": "复制 BibTeX",
-    "Local files": "本地文件",
     "BibTeX copied to clipboard.": "BibTeX 已复制到剪贴板。",
     "Copied bibtex: {path}": "已复制 BibTeX：{path}",
     "Abstract copied to clipboard.": "摘要已复制到剪贴板。",
@@ -83,12 +80,8 @@ _ZH = {
     "Done": "完成",
     "Error": "错误",
     "Missing": "缺少信息",
-    "Select": "选择",
     "Busy": "正在运行",
     "Please choose a dataset first.": "请先选择数据集。",
-    "Please select papers first.": "请先选择论文。",
-    "Abstract download already running. Use the cancel control in the status bar.": "摘要下载正在进行，请使用底部状态栏的取消按钮。",
-    "PDF download already running. Use the cancel control in the status bar.": "PDF 下载正在进行，请使用底部状态栏的取消按钮。",
     "Abstract download already running.": "摘要下载正在进行。",
     "PDF download already running.": "PDF 下载正在进行。",
     "Conference not available": "会议不可用",
@@ -109,10 +102,7 @@ _ZH = {
     "Browse": "浏览",
     "Conference": "会议",
     "Year": "年份",
-    "Status": "状态",
     "Papers": "论文数",
-    "Actions": "操作",
-    "Fetched": "已获取",
     "Add Dataset": "添加数据集",
     "New dataset": "新数据集",
     "Fetch dataset": "抓取数据集",
@@ -166,8 +156,7 @@ _ZH = {
     "Copy": "复制",
     "Untitled paper": "未命名论文",
     "Show in folder": "在文件夹中显示",
-    "Collapse sidebar": "收起侧边栏",
-    "Show sidebar": "显示侧边栏",
+    "Collapse sidebar": "收起为图标栏",
     "Hide details": "收起详情",
     "Show details": "显示详情",
     "Fetching BibTeX...": "正在获取 BibTeX...",
@@ -203,6 +192,18 @@ _ZH = {
     "{count} match": "{count} 篇匹配",
     "{count} matches": "{count} 篇匹配",
     "{count} selected": "已选 {count} 篇",
+    "{count} selected · {hidden} not shown": "已选 {count} 篇 · {hidden} 篇未显示",
+    "Expand sidebar": "展开侧栏",
+    "Quit PaperSpider?": "退出 PaperSpider？",
+    "Tasks are still running. Cancel them and quit?": "仍有任务在运行。取消这些任务并退出吗？",
+    "Quit": "退出",
+    "Keep running": "继续运行",
+    "Select paper": "选中论文",
+    "Unselect paper": "取消选中",
+    "Copy title": "复制标题",
+    "Copied title to clipboard": "已复制标题",
+    "Canceling paper list fetch...": "正在取消抓取论文列表...",
+    "Paper list fetch canceled": "已取消抓取论文列表",
 }
 
 
@@ -260,7 +261,9 @@ def match_count(count: int) -> str:
     return tr(key, count=count)
 
 
-def selected_count(count: int) -> str:
+def selected_count(count: int, hidden: int = 0) -> str:
+    if hidden:
+        return tr("{count} selected · {hidden} not shown", count=count, hidden=hidden)
     return tr("{count} selected", count=count)
 
 

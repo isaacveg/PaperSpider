@@ -19,11 +19,11 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSpinBox,
-    QStyle,
     QVBoxLayout,
     QWidget,
 )
 
+from .app_settings import APPLICATION, ORGANIZATION, request_delay_ms
 from .i18n import tr
 from .theme import (
     ACCENTS,
@@ -33,8 +33,9 @@ from .theme import (
     appearance_from_values,
     build_stylesheet,
     selected_theme,
+    themed_icon,
 )
-from .dialog_utils import configure_utility_dialog
+from .dialog_utils import configure_utility_dialog, finish_utility_dialog
 
 
 class SettingsDialog(QDialog):
@@ -44,7 +45,7 @@ class SettingsDialog(QDialog):
         self.setWindowTitle(tr("PaperSpider - Settings"))
         self.setMinimumSize(640, 440)
         self.resize(720, 520)
-        self._settings = QSettings("PaperSpider", "PaperSpider")
+        self._settings = QSettings(ORGANIZATION, APPLICATION)
         self._style_hints = None
         self._build_ui()
         self._load_previous_state()
@@ -105,7 +106,7 @@ class SettingsDialog(QDialog):
                     )
                 ]
             ),
-            QStyle.StandardPixmap.SP_BrowserReload,
+            "refresh",
         )
         self.content_cards_layout.addWidget(self.request_card)
 
@@ -133,34 +134,35 @@ class SettingsDialog(QDialog):
                     ),
                 ]
             ),
-            QStyle.StandardPixmap.SP_DesktopIcon,
+            "appearance",
         )
         self.content_cards_layout.addWidget(self.appearance_card)
         self.content_cards_layout.addStretch()
         scroll_content.setLayout(self.content_cards_layout)
         self.content_scroll.setWidget(scroll_content)
+        scroll_content.setAutoFillBackground(False)
 
         content_layout.addWidget(self.content_scroll)
         content_area.setLayout(content_layout)
         root_layout.addWidget(content_area, stretch=1)
         root_layout.addWidget(self._build_footer())
 
-        self.setLayout(root_layout)
+        finish_utility_dialog(self, root_layout)
 
-    def _settings_card(self, title: str, body: QWidget, icon: QStyle.StandardPixmap) -> QFrame:
+    def _settings_card(self, title: str, body: QWidget, icon: str) -> QFrame:
         card = QFrame()
         card.setObjectName("settingsContentCard")
         layout = QVBoxLayout()
-        layout.setContentsMargins(18, 16, 18, 18)
-        layout.setSpacing(12)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
 
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         icon_label = QLabel()
         icon_label.setObjectName("settingsIcon")
-        icon_label.setFixedSize(28, 28)
+        icon_label.setFixedSize(20, 20)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_label.setPixmap(self.style().standardIcon(icon).pixmap(20, 20))
+        icon_label.setPixmap(themed_icon(icon).pixmap(18, 18))
         title_label = QLabel(title)
         title_label.setObjectName("settingsCardTitle")
         header.addWidget(icon_label)
@@ -250,11 +252,7 @@ class SettingsDialog(QDialog):
         return footer
 
     def _load_previous_state(self) -> None:
-        delay_ms = self._settings.value("request_delay_ms", 100)
-        try:
-            self.delay_spin.setValue(int(delay_ms))
-        except (TypeError, ValueError):
-            self.delay_spin.setValue(100)
+        self.delay_spin.setValue(request_delay_ms(self._settings))
         theme = selected_theme(self._settings)
         accent = str(self._settings.value("appearance/accent", DEFAULT_ACCENT))
         if accent not in ACCENTS:

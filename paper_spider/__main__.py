@@ -16,6 +16,7 @@ def main() -> None:
     app = QApplication(sys.argv)
     install_qt_translations(app)
     window = WorkspaceWindow()
+    window.restore_session()
     window.show()
     sys.exit(app.exec())
 

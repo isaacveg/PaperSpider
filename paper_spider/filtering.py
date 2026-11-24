@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import Any, List, Mapping, Sequence
 
 
 @dataclass
@@ -40,7 +40,7 @@ def filter_paper_rows(
     should: List[tuple[FilterConfig, str]] = []
     must_not: List[tuple[FilterConfig, str]] = []
     for cfg in configs:
-        item = (cfg, cfg.value.lower())
+        item = (cfg, cfg.value.casefold())
         role = _role_key(cfg)
         if role == "must":
             must.append(item)
@@ -79,14 +79,29 @@ def _role_key(cfg: FilterConfig) -> str:
 def _field_text(row: dict, field: str) -> str:
     key = _FIELD_KEYS.get(field)
     if key is not None:
-        return str(row.get(key) or "").lower()
-    return " ".join(
-        str(row.get(key) or "")
-        for key in (
-            "title",
-            "category_text",
-            "authors_text",
-            "abstract",
-            "keywords_text",
-        )
-    ).lower()
+        return str(row.get(key) or "").casefold()
+    return search_text(row)
+
+
+SEARCH_TEXT_KEYS = (
+    "title",
+    "display_title",
+    "category_text",
+    "authors_text",
+    "abstract",
+    "keywords_text",
+)
+
+
+def search_text(row: Mapping[str, Any]) -> str:
+    """Return the case-folded text searched by "any field" queries."""
+
+    return " ".join(str(row.get(key) or "") for key in SEARCH_TEXT_KEYS).casefold()
+
+
+def matches_terms(haystack: str, terms: Sequence[str]) -> bool:
+    return all(term in haystack for term in terms)
+
+
+def query_terms(query: str) -> List[str]:
+    return query.strip().casefold().split()

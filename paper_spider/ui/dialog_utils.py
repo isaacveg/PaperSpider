@@ -5,10 +5,20 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QDialog, QMessageBox, QWidget
+from PyQt6.QtCore import QPoint, QSize, Qt
+from PyQt6.QtWidgets import (
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QLayout,
+    QMessageBox,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
-from .theme import apply_theme
+from .i18n import tr
+from .theme import apply_theme, themed_icon
 
 
 def configure_utility_dialog(dialog: QDialog) -> None:
@@ -17,6 +27,67 @@ def configure_utility_dialog(dialog: QDialog) -> None:
     dialog.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
     dialog.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
     dialog.setObjectName("utilityDialog")
+
+
+class DialogTitleBar(QWidget):
+    """In-app title bar for frameless dialogs: title, close button, drag to move."""
+
+    def __init__(self, dialog: QDialog) -> None:
+        super().__init__(dialog)
+        self._dialog = dialog
+        self._drag_offset: Optional[QPoint] = None
+        self.setObjectName("dialogTitleBar")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setFixedHeight(42)
+        layout = QHBoxLayout()
+        layout.setContentsMargins(16, 0, 8, 0)
+        self.title_label = QLabel(dialog.windowTitle())
+        self.title_label.setObjectName("dialogTitle")
+        self.close_btn = QToolButton()
+        self.close_btn.setObjectName("iconButton")
+        self.close_btn.setIcon(themed_icon("close"))
+        self.close_btn.setIconSize(QSize(16, 16))
+        self.close_btn.setToolTip(tr("Close"))
+        self.close_btn.clicked.connect(dialog.reject)
+        layout.addWidget(self.title_label, stretch=1)
+        layout.addWidget(self.close_btn)
+        self.setLayout(layout)
+        dialog.windowTitleChanged.connect(self.title_label.setText)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            return super().mousePressEvent(event)
+        handle = self._dialog.windowHandle()
+        if handle is not None and handle.startSystemMove():
+            return
+        self._drag_offset = (
+            event.globalPosition().toPoint() - self._dialog.frameGeometry().topLeft()
+        )
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_offset is not None:
+            self._dialog.move(event.globalPosition().toPoint() - self._drag_offset)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drag_offset = None
+        super().mouseReleaseEvent(event)
+
+
+def finish_utility_dialog(dialog: QDialog, content: QLayout) -> DialogTitleBar:
+    """Install ``content`` below a draggable title bar as the dialog's layout."""
+
+    container = QWidget()
+    container.setLayout(content)
+    root = QVBoxLayout()
+    root.setContentsMargins(1, 1, 1, 1)
+    root.setSpacing(0)
+    title_bar = DialogTitleBar(dialog)
+    root.addWidget(title_bar)
+    root.addWidget(container, stretch=1)
+    dialog.setLayout(root)
+    dialog.title_bar = title_bar
+    return title_bar
 
 
 def build_message_box(
@@ -30,8 +101,9 @@ def build_message_box(
     configure_utility_dialog(box)
     box.setObjectName("messageDialog")
     box.setWindowTitle(title)
-    box.setIcon(icon)
-    box.setText(text)
+    box.setIcon(QMessageBox.Icon.NoIcon)
+    box.setText(title)
+    box.setInformativeText(text)
     box.setStandardButtons(buttons)
 
     close_button = box.button(QMessageBox.StandardButton.Close)

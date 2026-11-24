@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import List, Optional, Sequence
 
-from PyQt6.QtCore import Qt, QSettings
+from PyQt6.QtCore import QSettings, QSize, Qt
 from PyQt6.QtGui import QIntValidator
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -25,11 +25,11 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QHeaderView,
-    QSizePolicy,
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -43,9 +43,15 @@ from ..datasets import (
     move_dataset_to_trash,
     scan_datasets,
 )
-from .dialog_utils import ask_confirmation, configure_utility_dialog, show_warning
+from .app_settings import APPLICATION, ORGANIZATION
+from .dialog_utils import (
+    ask_confirmation,
+    configure_utility_dialog,
+    finish_utility_dialog,
+    show_warning,
+)
 from .i18n import tr
-from .theme import apply_theme
+from .theme import apply_theme, themed_icon
 
 CONFERENCE_TEXT_INSET = 12
 
@@ -78,15 +84,15 @@ class DatasetDialog(QDialog):
         super().__init__(parent)
         configure_utility_dialog(self)
         self.setWindowTitle(tr("Datasets"))
-        self.setMinimumWidth(980)
-        self.resize(1120, 700)
+        self.setMinimumWidth(760)
+        self.resize(900, 620)
         self._conferences = (
             list(conferences) if conferences is not None else available_conferences()
         )
         self._conference_names = {
             conf.slug: conf.name for conf in self._conferences
         }
-        self._settings = QSettings("PaperSpider", "PaperSpider")
+        self._settings = QSettings(ORGANIZATION, APPLICATION)
         self._result: Optional[SelectionResult] = None
         self._entries: List[DatasetEntry] = []
         self._build_ui()
@@ -100,8 +106,8 @@ class DatasetDialog(QDialog):
 
         content = QWidget()
         layout = QVBoxLayout()
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(12)
+        layout.setContentsMargins(20, 6, 20, 16)
+        layout.setSpacing(10)
 
         base_group = QGroupBox(tr("Base folder"))
         base_layout = QGridLayout()
@@ -109,6 +115,8 @@ class DatasetDialog(QDialog):
         self.base_dir_edit = QLineEdit()
         self.base_dir_edit.textChanged.connect(self._on_base_dir_changed)
         browse_btn = QPushButton(tr("Browse"))
+        browse_btn.setIcon(themed_icon("folder"))
+        browse_btn.setIconSize(QSize(16, 16))
         browse_btn.clicked.connect(self._choose_dir)
 
         base_layout.addWidget(QLabel(tr("Folder")), 0, 0)
@@ -120,10 +128,14 @@ class DatasetDialog(QDialog):
         datasets_group = QGroupBox(tr("Datasets"))
         datasets_layout = QVBoxLayout()
         toolbar_layout = QHBoxLayout()
-        self.add_dataset_btn = QPushButton("+ " + tr("Add Dataset"))
+        self.add_dataset_btn = QPushButton(tr("Add Dataset"))
+        self.add_dataset_btn.setIcon(themed_icon("plus"))
+        self.add_dataset_btn.setIconSize(QSize(16, 16))
         self.add_dataset_btn.clicked.connect(self._add_entry)
         toolbar_layout.addWidget(self.add_dataset_btn)
         self.refresh_datasets_btn = QPushButton(tr("Refresh"))
+        self.refresh_datasets_btn.setIcon(themed_icon("refresh"))
+        self.refresh_datasets_btn.setIconSize(QSize(16, 16))
         self.refresh_datasets_btn.clicked.connect(
             lambda: self._refresh_existing(self.base_dir_edit.text().strip())
         )
@@ -167,13 +179,24 @@ class DatasetDialog(QDialog):
         self.new_dataset_panel.setVisible(False)
         datasets_layout.addWidget(self.new_dataset_panel)
 
-        self.dataset_table = QTableWidget(0, 5)
+        self.dataset_table = QTableWidget(0, 4)
         self.dataset_table.setItemDelegateForColumn(
             0, DatasetConferenceDelegate(self.dataset_table)
         )
         self.dataset_table.setHorizontalHeaderLabels(
-            [tr("Conference"), tr("Year"), tr("Status"), tr("Papers"), tr("Actions")]
+            [tr("Conference"), tr("Year"), tr("Papers"), ""]
         )
+        for column, alignment in (
+            (0, Qt.AlignmentFlag.AlignLeft),
+            (1, Qt.AlignmentFlag.AlignLeft),
+            (2, Qt.AlignmentFlag.AlignRight),
+        ):
+            self.dataset_table.horizontalHeaderItem(column).setTextAlignment(
+                alignment | Qt.AlignmentFlag.AlignVCenter
+            )
+        self.dataset_table.setShowGrid(False)
+        self.dataset_table.setFrameShape(QFrame.Shape.NoFrame)
+        self.dataset_table.verticalHeader().setDefaultSectionSize(40)
         self.dataset_table.setAlternatingRowColors(True)
         self.dataset_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.dataset_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -183,10 +206,9 @@ class DatasetDialog(QDialog):
         self.dataset_table.currentCellChanged.connect(self._update_use_selected_state)
         header = self.dataset_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        for column, width in ((1, 90), (2, 110), (3, 84)):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+            header.resizeSection(column, width)
         datasets_layout.addWidget(self.dataset_table, stretch=1)
         datasets_group.setLayout(datasets_layout)
         layout.addWidget(datasets_group, 1)
@@ -208,7 +230,7 @@ class DatasetDialog(QDialog):
 
         content.setLayout(layout)
         root_layout.addWidget(content, stretch=1)
-        self.setLayout(root_layout)
+        finish_utility_dialog(self, root_layout)
 
     def _load_previous_state(self) -> None:
         base_dir = self._settings.value("base_dir", "")
@@ -263,42 +285,34 @@ class DatasetDialog(QDialog):
         year_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         self.dataset_table.setItem(row, 1, year_item)
 
-        status_container = QWidget()
-        status_layout = QHBoxLayout()
-        status_layout.setContentsMargins(0, 0, 0, 0)
-        status_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        status_label = QLabel(tr("Fetched"))
-        status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        status_label.setObjectName("datasetStatusFetched")
-        status_label.setMaximumHeight(22)
-        status_layout.addWidget(status_label)
-        status_container.setLayout(status_layout)
-        self.dataset_table.setCellWidget(row, 2, status_container)
-
         paper_item = QTableWidgetItem(f"{entry.paper_count:,}")
         paper_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         paper_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-        self.dataset_table.setItem(row, 3, paper_item)
+        self.dataset_table.setItem(row, 2, paper_item)
 
         actions = QWidget()
         actions_layout = QHBoxLayout()
-        actions_layout.setContentsMargins(0, 0, 0, 0)
-        actions_layout.setSpacing(6)
-        fetch_btn = QPushButton(tr("Refresh"))
-        fetch_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        fetch_btn.setFixedHeight(24)
-        fetch_btn.setObjectName("datasetRefreshButton")
-        fetch_btn.clicked.connect(lambda _checked=False, widget=actions: self._fetch_action(widget))
-        delete_btn = QPushButton("x")
-        delete_btn.setObjectName("datasetDeleteButton")
-        delete_btn.setToolTip(tr("Delete dataset"))
-        delete_btn.clicked.connect(lambda _checked=False, widget=actions: self._delete_action(widget))
-        actions_layout.addWidget(fetch_btn)
-        actions_layout.addWidget(delete_btn)
+        actions_layout.setContentsMargins(0, 0, 8, 0)
+        actions_layout.setSpacing(2)
+        actions_layout.addStretch(1)
+        for icon_name, tooltip, handler in (
+            ("refresh", tr("Refresh dataset"), self._fetch_action),
+            ("trash", tr("Delete dataset"), self._delete_action),
+        ):
+            button = QToolButton()
+            button.setObjectName("rowIconButton")
+            button.setIcon(themed_icon(icon_name))
+            button.setIconSize(QSize(16, 16))
+            button.setToolTip(tooltip)
+            button.setAccessibleName(tooltip)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(
+                lambda _checked=False, widget=actions, fn=handler: fn(widget)
+            )
+            actions_layout.addWidget(button)
         actions.setLayout(actions_layout)
-        self.dataset_table.setCellWidget(row, 4, actions)
+        self.dataset_table.setCellWidget(row, 3, actions)
 
-        self.dataset_table.setRowHeight(row, 36)
         if focus:
             self.dataset_table.setCurrentCell(row, 0)
         else:
@@ -427,7 +441,7 @@ class DatasetDialog(QDialog):
 
     def _row_for_widget(self, widget: QWidget) -> Optional[int]:
         for row in range(self.dataset_table.rowCount()):
-            if self.dataset_table.cellWidget(row, 4) is widget:
+            if self.dataset_table.cellWidget(row, 3) is widget:
                 return row
         return None
 

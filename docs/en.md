@@ -20,7 +20,7 @@ uv run paperspider
 
 The paper list is stored locally and can be reopened without fetching it again. Use the refresh button beside the selected dataset's **⋯** menu to update it.
 
-Use the **⋯** button on the selected dataset to **Open in folder** or **Delete dataset**. Deleting moves the dataset folder to `.trash` and requires fetching it again. Drag the divider to resize the sidebar, or use the collapse button to hide it.
+Use the **⋯** button on the selected dataset to **Open in folder** or **Delete dataset**. Deleting moves the dataset folder to `.trash` and requires fetching it again. Drag the divider to resize the sidebar; dragging it narrow snaps it to a compact icon rail (hover for names, right-click a dataset for its actions, or use the arrow to expand again). The collapse button hides the sidebar completely.
 
 ## 2. Use filters
 
@@ -43,8 +43,11 @@ Select a row to see its title, authors, tags, abstract, and local files in the d
 - Use **Open PDF** or **Copy BibTeX** for the selected paper. Missing BibTeX is fetched from the conference site and copied to the clipboard.
 - Use **Show in folder** under **Local files** to open the file manager at the downloaded PDF.
 - Tick several papers, then use **Download abstracts** or **Download PDFs** in the action bar.
-- Use the header checkbox to select or clear all visible papers, or **Invert** to reverse the current selection.
-- Use **Task log** at the bottom to follow progress or cancel an active batch.
+- Use the header checkbox to select or clear all visible papers, or **Invert** to reverse the selection of visible papers.
+- Ticked papers stay selected when searching or filtering hides them; the action bar shows how many are not shown, and downloads and exports include them.
+- Keyboard: <kbd>Space</kbd> ticks the current paper, <kbd>Enter</kbd> opens its PDF, and <kbd>Ctrl/⌘</kbd>+<kbd>A</kbd> ticks all visible papers. Right-click a paper for more actions.
+- Click the **Papers / authors**, **Abstract**, or **PDF** header to sort; click again to reverse, and a third time to restore the default order.
+- Use **Task log** at the bottom to follow progress or cancel all running tasks. Results appear in the status bar, and the log opens automatically when some items fail.
 
 ## 5. Export results
 

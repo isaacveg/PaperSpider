@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional
+from typing import Callable, Iterator, List, Optional
 
 from .artifacts import (
     safe_filename,
@@ -22,6 +22,7 @@ from .storage import PaperStorage
 
 LogFn = Callable[[str], None]
 CancelFn = Callable[[], bool]
+ProgressFn = Callable[[int, int], None]
 
 
 @dataclass
@@ -48,8 +49,14 @@ class DownloadBatchResult:
 
 
 class WorkspaceService:
-    def fetch_list(self, conf, storage: PaperStorage) -> int:
-        papers = conf.list_papers(storage.year)
+    def fetch_list(
+        self,
+        conf,
+        storage: PaperStorage,
+        cancelled: Optional[CancelFn] = None,
+    ) -> int:
+        with _conference_cancel_context(conf, cancelled):
+            papers = conf.list_papers(storage.year)
         storage.upsert_papers(papers)
         return len(papers)
 
@@ -77,11 +84,12 @@ class WorkspaceService:
         rows: List[dict],
         cancelled: CancelFn,
         log: Optional[LogFn] = None,
+        progress: Optional[ProgressFn] = None,
     ) -> DownloadBatchResult:
         total = len(rows)
         result = DownloadBatchResult()
         updated_ids: List[str] = []
-        for idx, row in enumerate(rows, start=1):
+        for idx, row in _with_progress(rows, progress):
             if cancelled():
                 result.cancelled = True
                 break
@@ -98,9 +106,10 @@ class WorkspaceService:
                 if cancelled():
                     result.cancelled = True
                     break
-                result.failures.append(DownloadFailure(paper_id, title, str(exc)))
+                message = _failure_message(conf, exc)
+                result.failures.append(DownloadFailure(paper_id, title, message))
                 if log:
-                    log(f"[{idx}/{total}] failed abstract: {title} ({exc})")
+                    log(f"[{idx}/{total}] failed abstract: {title} ({message})")
                 continue
             storage.update_details(
                 updated.paper_id,
@@ -112,23 +121,17 @@ class WorkspaceService:
                 updated.bibtex,
             )
             updated_ids.append(updated.paper_id)
-            if updated.abstract and updated.abstract.strip():
+            found = bool(updated.abstract and updated.abstract.strip())
+            if found:
                 result.succeeded += 1
             else:
                 result.failures.append(
                     DownloadFailure(updated.paper_id, updated.title, "Abstract not found")
                 )
             if log:
-                if updated.abstract and updated.abstract.strip():
-                    log(f"[{idx}/{total}] abstract: {updated.title}")
-                else:
-                    log(f"[{idx}/{total}] missing abstract: {updated.title}")
-        refreshed_rows = storage.get_papers(updated_ids)
-        result.updated_rows = [
-            refreshed_rows[paper_id]
-            for paper_id in updated_ids
-            if paper_id in refreshed_rows
-        ]
+                status = "abstract" if found else "missing abstract"
+                log(f"[{idx}/{total}] {status}: {updated.title}")
+        result.updated_rows = _refreshed_rows(storage, updated_ids)
         return result
 
     def download_pdfs(
@@ -138,11 +141,12 @@ class WorkspaceService:
         rows: List[dict],
         cancelled: CancelFn,
         log: Optional[LogFn] = None,
+        progress: Optional[ProgressFn] = None,
     ) -> DownloadBatchResult:
         total = len(rows)
         result = DownloadBatchResult()
         updated_ids: List[str] = []
-        for idx, row in enumerate(rows, start=1):
+        for idx, row in _with_progress(rows, progress):
             if cancelled():
                 result.cancelled = True
                 break
@@ -161,9 +165,10 @@ class WorkspaceService:
                 if cancelled():
                     result.cancelled = True
                     break
-                result.failures.append(DownloadFailure(paper_id, title, str(exc)))
+                message = _failure_message(conf, exc)
+                result.failures.append(DownloadFailure(paper_id, title, message))
                 if log:
-                    log(f"[{idx}/{total}] failed PDF: {title} ({exc})")
+                    log(f"[{idx}/{total}] failed PDF: {title} ({message})")
                 continue
             base_name = safe_filename(row.get("title") or "", paper.paper_id)
             file_path = unique_artifact_path(
@@ -188,13 +193,33 @@ class WorkspaceService:
             result.succeeded += 1
             if log:
                 log(f"[{idx}/{total}] {paper.paper_id}")
-        refreshed_rows = storage.get_papers(updated_ids)
-        result.updated_rows = [
-            refreshed_rows[paper_id]
-            for paper_id in updated_ids
-            if paper_id in refreshed_rows
-        ]
+        result.updated_rows = _refreshed_rows(storage, updated_ids)
         return result
+
+    def save_bibtex(
+        self,
+        conf,
+        storage: PaperStorage,
+        row: dict,
+    ) -> Optional[tuple[str, str]]:
+        """Fetch (when not cached) and save a paper's BibTeX; return (bibtex, path)."""
+
+        bibtex = row.get("bibtex")
+        if not bibtex:
+            bibtex = conf.fetch_bibtex(paper_from_row(row, conf.slug, storage.year))
+        bibtex = (bibtex or "").strip()
+        if not bibtex:
+            return None
+        paper_id = row["paper_id"]
+        file_path = unique_artifact_path(
+            storage.paths.bib_dir,
+            safe_filename(row.get("title") or "", paper_id),
+            "bib",
+            paper_id,
+        )
+        write_text_artifact(file_path, bibtex)
+        storage.mark_bib_exported(paper_id, bibtex, file_path)
+        return bibtex, file_path
 
     def export_bibtex(
         self,
@@ -206,29 +231,34 @@ class WorkspaceService:
         total = len(rows)
         exported = 0
         for idx, row in enumerate(rows, start=1):
-            bibtex = row.get("bibtex")
-            if not bibtex:
-                paper = paper_from_row(row, conf.slug, storage.year)
-                try:
-                    bibtex = conf.fetch_bibtex(paper)
-                except RuntimeError:
-                    bibtex = None
-            if bibtex:
-                base_name = safe_filename(row.get("title") or "", row["paper_id"])
-                file_path = unique_artifact_path(
-                    storage.paths.bib_dir,
-                    base_name,
-                    "bib",
-                    row["paper_id"],
-                )
-                write_text_artifact(file_path, bibtex)
-                storage.mark_bib_exported(row["paper_id"], bibtex, file_path)
+            try:
+                saved = self.save_bibtex(conf, storage, row)
+            except RuntimeError:
+                saved = None
+            if saved:
                 exported += 1
                 if log:
                     log(f"[{idx}/{total}] saved bibtex: {row['paper_id']}")
             elif log:
                 log(f"[{idx}/{total}] missing bibtex: {row['paper_id']}")
         return exported
+
+
+def _with_progress(
+    rows: List[dict], progress: Optional[ProgressFn]
+) -> Iterator[tuple[int, dict]]:
+    """Yield rows and report progress once each loop body has finished."""
+
+    total = len(rows)
+    for idx, row in enumerate(rows, start=1):
+        yield idx, row
+        if progress:
+            progress(idx, total)
+
+
+def _refreshed_rows(storage: PaperStorage, paper_ids: List[str]) -> List[dict]:
+    refreshed = storage.get_papers(paper_ids)
+    return [refreshed[paper_id] for paper_id in paper_ids if paper_id in refreshed]
 
 
 def paper_from_row(row: dict, conf_slug: str, year: int) -> PaperMeta:
@@ -259,6 +289,15 @@ def _row_list(row: dict, field: str) -> List[str]:
     if isinstance(raw_value, list):
         return [str(value).strip() for value in raw_value if str(value).strip()]
     return []
+
+
+def _failure_message(conf, exc: Exception) -> str:
+    message = str(exc)
+    last_error = getattr(conf, "last_request_error", None)
+    detail = last_error() if callable(last_error) else None
+    if detail and detail not in message:
+        return f"{message} ({detail})"
+    return message
 
 
 def _looks_like_pdf(data: bytes) -> bool:

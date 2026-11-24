@@ -254,15 +254,29 @@ class PaperTableModelTests(unittest.TestCase):
             ),
         )
 
-    def test_model_reconciles_selection_against_visible_rows(self) -> None:
+    def test_model_keeps_hidden_selection_and_reports_visible_state(self) -> None:
         model = PaperTableModel()
         model.set_rows([self.rows[0]], selected_ids={"p1", "p2"})
 
-        self.assertEqual({"p1"}, model.selected_ids())
+        self.assertEqual({"p1", "p2"}, model.selected_ids())
+        self.assertEqual(1, model.visible_selected_count())
         self.assertEqual(
             Qt.CheckState.Checked,
             model.data(model.index(0, CHECK_COLUMN), Qt.ItemDataRole.CheckStateRole),
         )
+        self.assertEqual(Qt.CheckState.Checked, model.selection_state())
+
+    def test_notify_rows_changed_merges_contiguous_rows(self) -> None:
+        model = PaperTableModel()
+        model.set_rows(self.rows, selected_ids=set())
+        changed: list[tuple[int, int]] = []
+        model.dataChanged.connect(
+            lambda top, bottom, _roles: changed.append((top.row(), bottom.row()))
+        )
+
+        model.notify_rows_changed({"p1", "p2", "p4", "missing"})
+
+        self.assertEqual([(0, 1), (3, 3)], changed)
 
     def test_model_notifies_status_updates_for_specific_papers(self) -> None:
         model = PaperTableModel()

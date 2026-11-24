@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 import unittest
 
@@ -21,6 +22,19 @@ class PaperStorageTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    def test_database_uses_wal_journal_mode(self) -> None:
+        with self.storage._connect() as conn:
+            mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+
+        self.assertEqual("wal", mode.lower())
+
+    def test_recreated_dataset_folder_gets_a_fresh_schema(self) -> None:
+        shutil.rmtree(self.storage.paths.root_dir)
+
+        storage = PaperStorage(self.temp_dir.name, "iclr", 2025)
+
+        self.assertEqual(0, storage.count_papers())
 
     def test_upsert_preserves_existing_metadata_when_new_listing_is_sparse(self) -> None:
         self.storage.upsert_papers(

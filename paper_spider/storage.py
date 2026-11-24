@@ -9,11 +9,18 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Optional
+from typing import Any, Iterable, Iterator, List, Optional
 
 from .models import PaperCategory, PaperMeta
+from .text_utils import display_title
+
+BUSY_TIMEOUT_SECONDS = 10.0
+_SCHEMA_LOCK = threading.Lock()
+_INITIALIZED_SCHEMAS: set[tuple[str, int, int]] = set()
 
 
 @dataclass
@@ -41,13 +48,30 @@ class PaperStorage:
         db_path = os.path.join(root_dir, "papers.sqlite")
         return StoragePaths(root_dir=root_dir, db_path=db_path, pdf_dir=pdf_dir, bib_dir=bib_dir)
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.paths.db_path)
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.paths.db_path, timeout=BUSY_TIMEOUT_SECONDS)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
+    def _schema_key(self) -> Optional[tuple[str, int, int]]:
+        try:
+            stat = os.stat(self.paths.db_path)
+        except OSError:
+            return None
+        return (self.paths.db_path, stat.st_ino, stat.st_ctime_ns)
 
     def _init_db(self) -> None:
+        key = self._schema_key()
+        with _SCHEMA_LOCK:
+            if key is not None and key in _INITIALIZED_SCHEMAS:
+                return
         with self._connect() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS papers (
@@ -72,18 +96,24 @@ class PaperStorage:
                 )
                 """
             )
-            self._ensure_column(conn, "bib_path", "TEXT")
-            self._ensure_column(conn, "pdf_path", "TEXT")
-            self._ensure_column(conn, "track", "TEXT NOT NULL DEFAULT 'main'")
-            self._ensure_column(conn, "paper_type", "TEXT NOT NULL DEFAULT 'conference'")
+            columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(papers)").fetchall()
+            }
+            for name, definition in (
+                ("bib_path", "TEXT"),
+                ("pdf_path", "TEXT"),
+                ("track", "TEXT NOT NULL DEFAULT 'main'"),
+                ("paper_type", "TEXT NOT NULL DEFAULT 'conference'"),
+            ):
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE papers ADD COLUMN {name} {definition}")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_conf_year ON papers(conf, year)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_title ON papers(title)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_authors ON papers(authors)")
-
-    def _ensure_column(self, conn: sqlite3.Connection, name: str, definition: str) -> None:
-        columns = [row["name"] for row in conn.execute("PRAGMA table_info(papers)").fetchall()]
-        if name not in columns:
-            conn.execute(f"ALTER TABLE papers ADD COLUMN {name} {definition}")
+            conn.execute("DROP INDEX IF EXISTS idx_authors")
+        key = self._schema_key()
+        if key is not None:
+            with _SCHEMA_LOCK:
+                _INITIALIZED_SCHEMAS.add(key)
 
     def _serialize_list(self, values: Iterable[Any]) -> str:
         normalized = [str(value).strip() for value in values if str(value).strip()]
@@ -120,6 +150,7 @@ class PaperStorage:
         row["track"] = category.track
         row["paper_type"] = category.paper_type
         row["category_text"] = category.label
+        row["display_title"] = display_title(str(row.get("title") or ""))
         row["has_pdf"] = bool(row.get("pdf_status") and row.get("pdf_path"))
         row["has_bib"] = bool(row.get("bib_path"))
         return row

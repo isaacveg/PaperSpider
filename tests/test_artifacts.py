@@ -10,7 +10,12 @@ import os
 import tempfile
 import unittest
 
-from paper_spider.artifacts import safe_filename, unique_artifact_path
+from paper_spider.artifacts import (
+    safe_filename,
+    unique_artifact_path,
+    write_binary_artifact,
+    write_text_artifact,
+)
 
 
 class ArtifactTests(unittest.TestCase):
@@ -32,6 +37,30 @@ class ArtifactTests(unittest.TestCase):
             path = unique_artifact_path(temp_dir, "paper", "pdf", "paper-1")
 
         self.assertTrue(path.endswith("paper_paper-1.pdf"))
+
+    def test_unique_artifact_path_never_returns_an_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for name in ("paper.pdf", "paper_paper-1.pdf"):
+                with open(os.path.join(temp_dir, name), "wb") as f:
+                    f.write(b"x")
+
+            path = unique_artifact_path(temp_dir, "paper", "pdf", "paper-1")
+
+        self.assertTrue(path.endswith("paper_paper-1_2.pdf"))
+
+    def test_atomic_write_replaces_content_without_leaving_temp_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = os.path.join(temp_dir, "paper.bib")
+            write_text_artifact(path, "old")
+            write_text_artifact(path, "new")
+            write_binary_artifact(os.path.join(temp_dir, "paper.pdf"), b"%PDF")
+
+            with open(path, encoding="utf-8") as f:
+                content = f.read()
+            names = sorted(os.listdir(temp_dir))
+
+        self.assertEqual("new", content)
+        self.assertEqual(["paper.bib", "paper.pdf"], names)
 
 
 if __name__ == "__main__":

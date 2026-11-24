@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..filtering import FilterConfig
-from .dialog_utils import configure_utility_dialog
+from .dialog_utils import configure_utility_dialog, finish_utility_dialog
 from .i18n import current_language, tr
 from .theme import apply_theme
 
@@ -151,7 +151,7 @@ class FilterDialog(QDialog):
         super().__init__(parent)
         configure_utility_dialog(self)
         self.setWindowTitle(tr("Filter papers"))
-        self.resize(760, 620)
+        self.resize(780, 440)
         self._rows: List[FilterRow] = []
         self._build_ui()
         for config in configs or []:
@@ -164,11 +164,9 @@ class FilterDialog(QDialog):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout()
-        layout.setContentsMargins(22, 18, 22, 16)
+        layout.setContentsMargins(20, 14, 20, 16)
         layout.setSpacing(12)
 
-        self.title_label = QLabel(tr("Filter papers"))
-        self.title_label.setObjectName("filterTitleLabel")
         self.hint_label = QLabel(
             tr(
                 "Include rules must match. Prefer rules can contribute to a minimum. "
@@ -194,6 +192,7 @@ class FilterDialog(QDialog):
         self.should_spin = QSpinBox()
         self.should_spin.setRange(0, 10)
         self.should_spin.setValue(0)
+        self.should_spin.setFixedWidth(76)
         self.should_spin.setToolTip(
             tr("Require at least N Prefer rules to match")
         )
@@ -201,7 +200,6 @@ class FilterDialog(QDialog):
         min_layout.addWidget(self.should_spin)
         self.min_preferred_row.setLayout(min_layout)
         toolbar.addWidget(self.min_preferred_row)
-        layout.addWidget(self.title_label)
         layout.addWidget(self.hint_label)
         layout.addLayout(toolbar)
 
@@ -218,6 +216,7 @@ class FilterDialog(QDialog):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         self.filter_scroll.setWidget(container)
+        container.setAutoFillBackground(False)
         layout.addWidget(self.filter_scroll, stretch=1)
 
         footer = QHBoxLayout()
@@ -235,7 +234,7 @@ class FilterDialog(QDialog):
         footer.addWidget(self.cancel_btn)
         footer.addWidget(self.apply_filter_btn)
         layout.addLayout(footer)
-        self.setLayout(layout)
+        finish_utility_dialog(self, layout)
 
     def _add_row(self, config: Optional[FilterConfig] = None) -> FilterRow:
         row = FilterRow(self)

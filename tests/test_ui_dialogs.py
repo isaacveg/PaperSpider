@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QTableWidget,
+    QToolButton,
     QWidget,
 )
 
@@ -188,7 +189,8 @@ class SettingsDialogTests(unittest.TestCase):
             dialog.dataset_table.horizontalHeaderItem(index).text()
             for index in range(dialog.dataset_table.columnCount())
         ]
-        self.assertEqual(["Conference", "Year", "Status", "Papers", "Actions"], headers)
+        self.assertEqual(["Conference", "Year", "Papers", ""], headers)
+        self.assertEqual("Datasets", dialog.title_bar.title_label.text())
         self.assertEqual("Search datasets...", dialog.search_edit.placeholderText())
 
     def test_dataset_dialog_reuses_supplied_conferences(self) -> None:
@@ -215,15 +217,13 @@ class SettingsDialogTests(unittest.TestCase):
             DatasetEntry("acl", 2025, "/tmp/acl/2025", paper_count=1699)
         )
 
-        actions = dialog.dataset_table.cellWidget(row, 4)
+        actions = dialog.dataset_table.cellWidget(row, 3)
         self.assertIsNotNone(actions)
-        buttons = [button.text() for button in actions.findChildren(QPushButton)]
-        top_level_buttons = [
-            button.text()
-            for button in dialog.findChildren(QPushButton)
-            if button.parent() is not actions
-        ]
-
+        buttons = {
+            button.toolTip(): button for button in actions.findChildren(QToolButton)
+        }
+        self.assertEqual({"Refresh dataset", "Delete dataset"}, set(buttons))
+        self.assertTrue(all(b.objectName() == "rowIconButton" for b in buttons.values()))
         self.assertEqual("ACL", dialog.dataset_table.item(row, 0).text())
         delegate = dialog.dataset_table.itemDelegateForColumn(0)
         self.assertIsInstance(delegate, DatasetConferenceDelegate)
@@ -232,19 +232,12 @@ class SettingsDialogTests(unittest.TestCase):
             dialog.dataset_table.item(row, 0).flags() & Qt.ItemFlag.ItemIsUserCheckable
         )
         self.assertEqual("2025", dialog.dataset_table.item(row, 1).text())
-        self.assertEqual("Fetched", dialog.dataset_table.cellWidget(row, 2).findChild(QLabel).text())
-        self.assertEqual("1,699", dialog.dataset_table.item(row, 3).text())
-        self.assertIn("Refresh", buttons)
-        self.assertIn("x", buttons)
-        status_label = dialog.dataset_table.cellWidget(row, 2).findChild(QLabel)
-        refresh_button = next(
-            button for button in actions.findChildren(QPushButton) if button.text() == "Refresh"
-        )
-        self.assertLessEqual(status_label.maximumHeight(), 22)
-        self.assertEqual("datasetRefreshButton", refresh_button.objectName())
-        self.assertLessEqual(refresh_button.maximumHeight(), 24)
-        self.assertEqual([], dialog.dataset_table.cellWidget(row, 0).findChildren(QComboBox) if dialog.dataset_table.cellWidget(row, 0) else [])
-        self.assertNotIn("Delete", top_level_buttons)
+        self.assertEqual("1,699", dialog.dataset_table.item(row, 2).text())
+
+        fetched: list[int] = []
+        dialog._fetch_row = fetched.append
+        buttons["Refresh dataset"].click()
+        self.assertEqual([row], fetched)
 
     def test_selected_row_uses_only_the_table_current_row(self) -> None:
         with patch("paper_spider.ui.dataset_dialog.QSettings", FakeSettings):
@@ -430,14 +423,18 @@ class ExportDialogTests(unittest.TestCase):
 
         self.assertEqual("Copy", copy_button.text())
 
-    def test_export_uses_shared_theme_roles_with_native_window_chrome(self) -> None:
+    def test_export_uses_shared_theme_roles_and_app_title_bar(self) -> None:
         dialog = ExportDialog(self.rows)
         button_roles = {
             button.text(): button.objectName()
             for button in dialog.findChildren(QPushButton)
         }
 
-        self.assertFalse(dialog.windowFlags() & Qt.WindowType.FramelessWindowHint)
+        self.assertTrue(dialog.windowFlags() & Qt.WindowType.FramelessWindowHint)
+        self.assertEqual("Export Selected Papers", dialog.title_bar.title_label.text())
+        dialog.show()
+        dialog.title_bar.close_btn.click()
+        self.assertEqual(QDialog.DialogCode.Rejected.value, dialog.result())
         self.assertTrue(dialog.styleSheet())
         self.assertEqual("primaryButton", button_roles["Generate"])
         self.assertEqual("secondaryButton", button_roles["Copy"])

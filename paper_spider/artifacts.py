@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
+import tempfile
 
 
 def safe_filename(title: str, fallback: str, *, max_length: int = 120) -> str:
@@ -26,14 +28,31 @@ def unique_artifact_path(directory: str, base_name: str, extension: str, fallbac
     path = os.path.join(directory, f"{base_name}.{extension}")
     if not os.path.exists(path):
         return path
-    return os.path.join(directory, f"{base_name}_{fallback_suffix}.{extension}")
+    suffix = safe_filename(fallback_suffix, "file")
+    path = os.path.join(directory, f"{base_name}_{suffix}.{extension}")
+    counter = 2
+    while os.path.exists(path):
+        path = os.path.join(directory, f"{base_name}_{suffix}_{counter}.{extension}")
+        counter += 1
+    return path
 
 
 def write_binary_artifact(path: str, data: bytes) -> None:
-    with open(path, "wb") as f:
-        f.write(data)
+    _atomic_write(path, data)
 
 
 def write_text_artifact(path: str, text: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
+    _atomic_write(path, text.encode("utf-8"))
+
+
+def _atomic_write(path: str, data: bytes) -> None:
+    directory = os.path.dirname(path) or "."
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".tmp-", suffix=".part")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp_path, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise

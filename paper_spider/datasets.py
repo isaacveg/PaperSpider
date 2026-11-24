@@ -12,6 +12,7 @@ import os
 import shutil
 import sqlite3
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from typing import List
 
@@ -36,7 +37,7 @@ def _safe_listdir(path: str) -> List[str]:
 
 def _paper_count(db_path: str, conf_slug: str, year: int) -> int:
     try:
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path, timeout=5)) as conn:
             row = conn.execute(
                 "SELECT COUNT(*) FROM papers WHERE conf = ? AND year = ?",
                 (conf_slug, year),

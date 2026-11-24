@@ -11,8 +11,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Optional, Sequence
 
-from PyQt6.QtCore import QPoint, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QRect, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
     QGuiApplication,
     QKeySequence,
     QPainter,
@@ -28,6 +31,7 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTextEdit,
     QToolButton,
     QVBoxLayout,
@@ -37,7 +41,28 @@ from PyQt6.QtWidgets import (
 from ..filtering import FilterConfig
 from .filter_dialog import filter_role_label
 from .i18n import display_category, tr
+from .paper_table_model import row_title
 from .theme import themed_icon
+
+
+SIDEBAR_RAIL_WIDTH = 64
+SIDEBAR_MIN_WIDTH = 232
+SIDEBAR_MAX_WIDTH = 440
+SIDEBAR_SNAP_WIDTH = (SIDEBAR_RAIL_WIDTH + SIDEBAR_MIN_WIDTH) // 2
+
+
+def _repolish(widget: QWidget) -> None:
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+
+
+def conference_badge_label(name: str) -> str:
+    """Short label shown for a conference in the compact sidebar rail."""
+
+    words = name.split()
+    if len(words) > 1:
+        return "".join(word[0] for word in words).upper()[:4]
+    return name
 
 
 class SidebarButton(QPushButton):
@@ -52,9 +77,9 @@ class SidebarButton(QPushButton):
         self.icon_name = icon_name
         self._full_text = text
         self._elide = elide
+        self._compact = False
         self.setObjectName("sidebarItem")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setCheckable(False)
         self.setToolTip(text)
         self.setAccessibleName(text)
         if icon_name:
@@ -66,11 +91,26 @@ class SidebarButton(QPushButton):
         self.setAccessibleName(text)
         self._refresh_text()
 
+    def set_compact(self, compact: bool) -> None:
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self.setProperty("compact", compact)
+        _repolish(self)
+        self._refresh_text()
+
+    def _text_width(self) -> int:
+        reserved = 22
+        if not self.icon().isNull():
+            reserved += self.iconSize().width() + 6
+        return max(12, self.width() - reserved)
+
     def _refresh_text(self) -> None:
-        if self._elide:
-            available = max(12, self.width() - 48)
+        if self._compact:
+            text = ""
+        elif self._elide:
             text = self.fontMetrics().elidedText(
-                self._full_text, Qt.TextElideMode.ElideRight, available
+                self._full_text, Qt.TextElideMode.ElideRight, self._text_width()
             )
         else:
             text = self._full_text
@@ -97,6 +137,7 @@ class DatasetMenuButton(QToolButton):
         self.setAccessibleName(tr("Dataset options"))
 
     def paintEvent(self, event) -> None:
+        super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         role = (
@@ -108,12 +149,7 @@ class DatasetMenuButton(QToolButton):
         painter.setPen(Qt.PenStyle.NoPen)
         center = self.rect().center()
         for offset in (-5, 0, 5):
-            painter.drawEllipse(
-                center.x() + offset - 2,
-                center.y() - 2,
-                4,
-                4,
-            )
+            painter.drawEllipse(center.x() + offset - 2, center.y() - 2, 4, 4)
 
     def enterEvent(self, event) -> None:
         self.update()
@@ -124,10 +160,57 @@ class DatasetMenuButton(QToolButton):
         super().leaveEvent(event)
 
 
+class DatasetBadge(QToolButton):
+    """Compact conference/year button shown in the sidebar rail."""
+
+    def __init__(self, label: str, year: int, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("datasetBadge")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedHeight(40)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._label = label
+        self._year = f"’{year % 100:02d}"
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        rect = self.rect().adjusted(3, 4, -3, -4)
+        label_font = QFont(self.font())
+        label_font.setBold(True)
+        size = 11
+        label_font.setPixelSize(size)
+        while size > 8 and QFontMetrics(label_font).horizontalAdvance(self._label) > rect.width():
+            size -= 1
+            label_font.setPixelSize(size)
+        text_color = self.palette().color(QPalette.ColorRole.ButtonText)
+        painter.setFont(label_font)
+        painter.setPen(text_color)
+        half = rect.height() // 2
+        painter.drawText(
+            QRect(rect.left(), rect.top(), rect.width(), half + 2),
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
+            self._label,
+        )
+        year_font = QFont(self.font())
+        year_font.setPixelSize(10)
+        painter.setFont(year_font)
+        year_color = QColor(text_color)
+        year_color.setAlphaF(0.55)
+        painter.setPen(year_color)
+        painter.drawText(
+            QRect(rect.left(), rect.top() + half + 2, rect.width(), half - 2),
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+            self._year,
+        )
+
+
 class DatasetSidebarItem(QWidget):
     activated = pyqtSignal(str, int)
     menu_requested = pyqtSignal(str, int, QPoint)
     refresh_requested = pyqtSignal(str, int)
+    context_menu_requested = pyqtSignal(str, int, QPoint)
 
     def __init__(
         self,
@@ -136,6 +219,7 @@ class DatasetSidebarItem(QWidget):
         text: str,
         paper_count: int,
         parent: Optional[QWidget] = None,
+        badge_label: Optional[str] = None,
     ) -> None:
         super().__init__(parent)
         self.conf_slug = conf_slug
@@ -143,42 +227,72 @@ class DatasetSidebarItem(QWidget):
         self.setObjectName("datasetItem")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        tooltip = f"{text} · {tr('{count} papers', count=f'{paper_count:,}')}"
         layout = QHBoxLayout()
-        layout.setContentsMargins(0, 0, 8, 0)
-        layout.setSpacing(2)
+        layout.setContentsMargins(0, 0, 6, 0)
+        layout.setSpacing(0)
         self.main_btn = SidebarButton(text, "nav-dataset", self, elide=True)
-        self.main_btn.setToolTip(f"{text} · {tr('{count} papers', count=paper_count)}")
-        self.main_btn.clicked.connect(
-            lambda: self.activated.emit(self.conf_slug, self.year)
-        )
+        self.main_btn.setToolTip(tooltip)
+        self.main_btn.clicked.connect(self._activate)
         self.refresh_btn = QToolButton()
         self.refresh_btn.setObjectName("datasetRefreshAction")
         self.refresh_btn.setIcon(themed_icon("refresh"))
-        self.refresh_btn.setIconSize(QSize(15, 15))
+        self.refresh_btn.setIconSize(QSize(14, 14))
         self.refresh_btn.setFixedSize(24, 24)
+        self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.refresh_btn.setToolTip(tr("Refresh dataset"))
-        self.refresh_btn.setVisible(False)
         self.refresh_btn.clicked.connect(self._request_refresh)
         self.menu_btn = DatasetMenuButton(self)
-        self.menu_btn.setVisible(False)
         self.menu_btn.clicked.connect(self._request_menu)
+        for button in (self.refresh_btn, self.menu_btn):
+            policy = button.sizePolicy()
+            policy.setRetainSizeWhenHidden(True)
+            button.setSizePolicy(policy)
+        self.badge_btn = DatasetBadge(badge_label or text, year, self)
+        self.badge_btn.setToolTip(tooltip)
+        self.badge_btn.setAccessibleName(text)
+        self.badge_btn.clicked.connect(self._activate)
+        self.badge_btn.setVisible(False)
         layout.addWidget(self.main_btn, stretch=1)
-        layout.addWidget(
-            self.refresh_btn, alignment=Qt.AlignmentFlag.AlignVCenter
-        )
-        layout.addWidget(
-            self.menu_btn, alignment=Qt.AlignmentFlag.AlignVCenter
-        )
+        layout.addWidget(self.badge_btn, stretch=1)
+        layout.addWidget(self.refresh_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self.menu_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
         self.setLayout(layout)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(
+            lambda pos: self.context_menu_requested.emit(
+                self.conf_slug, self.year, self.mapToGlobal(pos)
+            )
+        )
+        for child in (self.main_btn, self.badge_btn):
+            child.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            child.customContextMenuRequested.connect(
+                lambda pos, source=child: self.context_menu_requested.emit(
+                    self.conf_slug, self.year, source.mapToGlobal(pos)
+                )
+            )
         self._active = False
         self._hovered = False
+        self._compact = False
         self._update_menu_visibility()
+
+    def _activate(self) -> None:
+        self.activated.emit(self.conf_slug, self.year)
 
     def set_active(self, active: bool) -> None:
         self._active = active
         self.setProperty("active", active)
-        self.style().unpolish(self)
-        self.style().polish(self)
+        self.badge_btn.setProperty("active", active)
+        _repolish(self)
+        _repolish(self.badge_btn)
+        self.badge_btn.update()
+        self._update_menu_visibility()
+
+    def set_compact(self, compact: bool) -> None:
+        self._compact = compact
+        self.layout().setContentsMargins(0, 0, 0 if compact else 6, 0)
+        self.main_btn.setVisible(not compact)
+        self.badge_btn.setVisible(compact)
         self._update_menu_visibility()
 
     def enterEvent(self, event) -> None:
@@ -192,23 +306,27 @@ class DatasetSidebarItem(QWidget):
         super().leaveEvent(event)
 
     def _update_menu_visibility(self) -> None:
-        visible = self._active or self._hovered
-        self.refresh_btn.setVisible(visible)
-        self.menu_btn.setVisible(visible)
+        visible = not self._compact and (self._active or self._hovered)
+        for button in (self.refresh_btn, self.menu_btn):
+            policy = button.sizePolicy()
+            if policy.retainSizeWhenHidden() == self._compact:
+                policy.setRetainSizeWhenHidden(not self._compact)
+                button.setSizePolicy(policy)
+                button.updateGeometry()
+            button.setVisible(visible)
+        self.layout().invalidate()
 
     def _request_refresh(self) -> None:
         self.refresh_requested.emit(self.conf_slug, self.year)
 
     def _request_menu(self) -> None:
-        position = self.menu_btn.mapToGlobal(
-            QPoint(0, self.menu_btn.height())
-        )
+        position = self.menu_btn.mapToGlobal(QPoint(0, self.menu_btn.height()))
         self.menu_requested.emit(self.conf_slug, self.year, position)
 
     def refresh_icon(self) -> None:
         self.main_btn.refresh_icon()
         self.refresh_btn.setIcon(themed_icon("refresh"))
-        self.refresh_btn.setIconSize(QSize(15, 15))
+        self.refresh_btn.setIconSize(QSize(14, 14))
 
 
 class AppSidebar(QWidget):
@@ -217,7 +335,7 @@ class AppSidebar(QWidget):
     all_papers_clicked = pyqtSignal()
     filters_clicked = pyqtSignal()
     dataset_clicked = pyqtSignal(str, int)
-    collapse_clicked = pyqtSignal()
+    toggle_compact_clicked = pyqtSignal()
     open_dataset_folder = pyqtSignal(str, int)
     delete_dataset = pyqtSignal(str, int)
     refresh_dataset = pyqtSignal(str, int)
@@ -225,32 +343,35 @@ class AppSidebar(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setObjectName("appSidebar")
-        self.setMinimumWidth(140)
-        self.setMaximumWidth(440)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setMinimumWidth(SIDEBAR_RAIL_WIDTH)
+        self.setMaximumWidth(SIDEBAR_MAX_WIDTH)
         self._dataset_items: List[DatasetSidebarItem] = []
+        self._compact = False
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(18, 18, 14, 16)
-        layout.setSpacing(8)
+        layout.setContentsMargins(12, 14, 12, 12)
+        layout.setSpacing(2)
         self.root_layout = layout
 
         brand = QHBoxLayout()
+        brand.setContentsMargins(4, 0, 0, 0)
         brand.setSpacing(10)
-        icon_label = QLabel()
+        self.icon_label = QLabel()
         icon_path = Path(__file__).with_name("assets") / "app-icon.png"
         device_ratio = 1.0
         screen = QGuiApplication.primaryScreen()
         if screen is not None:
             device_ratio = screen.devicePixelRatio()
         pixmap = QPixmap(icon_path.as_posix()).scaled(
-            int(40 * device_ratio),
-            int(40 * device_ratio),
+            int(32 * device_ratio),
+            int(32 * device_ratio),
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
         pixmap.setDevicePixelRatio(device_ratio)
-        icon_label.setPixmap(pixmap)
-        icon_label.setFixedSize(42, 42)
+        self.icon_label.setPixmap(pixmap)
+        self.icon_label.setFixedSize(32, 32)
         self.brand_label = QLabel("PaperSpider")
         self.brand_label.setObjectName("brandLabel")
         self.collapse_btn = QToolButton()
@@ -258,13 +379,23 @@ class AppSidebar(QWidget):
         self.collapse_btn.setIcon(themed_icon("chevron-left"))
         self.collapse_btn.setIconSize(QSize(16, 16))
         self.collapse_btn.setToolTip(tr("Collapse sidebar"))
-        self.collapse_btn.clicked.connect(self.collapse_clicked.emit)
-        brand.addWidget(icon_label)
+        self.collapse_btn.clicked.connect(self.toggle_compact_clicked.emit)
+        brand.addWidget(self.icon_label)
         brand.addWidget(self.brand_label)
         brand.addStretch(1)
         brand.addWidget(self.collapse_btn)
+        self.brand_layout = brand
         layout.addLayout(brand)
-        layout.addSpacing(12)
+
+        self.expand_btn = QToolButton()
+        self.expand_btn.setObjectName("iconButton")
+        self.expand_btn.setIcon(themed_icon("chevron-right"))
+        self.expand_btn.setIconSize(QSize(16, 16))
+        self.expand_btn.setToolTip(tr("Expand sidebar"))
+        self.expand_btn.clicked.connect(self.toggle_compact_clicked.emit)
+        self.expand_btn.setVisible(False)
+        layout.addWidget(self.expand_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addSpacing(14)
 
         self.all_papers_btn = SidebarButton(tr("All papers"), "nav-all")
         self.all_papers_btn.clicked.connect(self.all_papers_clicked.emit)
@@ -278,19 +409,22 @@ class AppSidebar(QWidget):
         divider.setObjectName("sidebarDivider")
         divider.setFrameShape(QFrame.Shape.HLine)
         layout.addWidget(divider)
+        layout.addSpacing(8)
 
         section = QHBoxLayout()
-        section.setContentsMargins(8, 4, 0, 0)
+        section.setContentsMargins(0, 0, 0, 2)
         self.section_label = QLabel(tr("Conference datasets"))
         self.section_label.setObjectName("sidebarSection")
         self.add_dataset_btn = QToolButton()
         self.add_dataset_btn.setObjectName("sidebarAddButton")
-        self.add_dataset_btn.setText("+")
+        self.add_dataset_btn.setIcon(themed_icon("plus"))
+        self.add_dataset_btn.setIconSize(QSize(16, 16))
+        self.add_dataset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.add_dataset_btn.setToolTip(tr("Add dataset"))
         self.add_dataset_btn.clicked.connect(self.add_dataset_clicked.emit)
-        section.addWidget(self.section_label)
-        section.addStretch(1)
+        section.addWidget(self.section_label, stretch=1)
         section.addWidget(self.add_dataset_btn)
+        self.section_layout = section
         layout.addLayout(section)
 
         self.dataset_layout = QVBoxLayout()
@@ -308,6 +442,7 @@ class AppSidebar(QWidget):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         self.dataset_scroll.setWidget(dataset_container)
+        dataset_container.setAutoFillBackground(False)
         layout.addWidget(self.dataset_scroll, stretch=1)
 
         self.settings_btn = SidebarButton(tr("Settings"), "nav-settings")
@@ -315,7 +450,29 @@ class AppSidebar(QWidget):
         self.settings_btn.clicked.connect(self.settings_clicked.emit)
         layout.addWidget(self.settings_btn)
         self.setLayout(layout)
-        self._apply_compact_layout()
+
+    def is_compact(self) -> bool:
+        return self._compact
+
+    def set_compact(self, compact: bool) -> None:
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self.root_layout.setContentsMargins(*((8, 14, 8, 12) if compact else (12, 14, 12, 12)))
+        rail_inset = (SIDEBAR_RAIL_WIDTH - 16 - self.icon_label.width()) // 2
+        self.brand_layout.setContentsMargins(rail_inset if compact else 4, 0, 0, 0)
+        self.brand_label.setVisible(not compact)
+        self.collapse_btn.setVisible(not compact)
+        self.expand_btn.setVisible(compact)
+        self.section_label.setVisible(not compact)
+        self.section_layout.setAlignment(
+            self.add_dataset_btn,
+            Qt.AlignmentFlag.AlignHCenter if compact else Qt.AlignmentFlag.AlignRight,
+        )
+        for button in (self.all_papers_btn, self.filters_btn, self.settings_btn):
+            button.set_compact(compact)
+        for item in self._dataset_items:
+            item.set_compact(compact)
 
     def set_filter_count(self, count: int) -> None:
         text = tr("Filters")
@@ -335,56 +492,69 @@ class AppSidebar(QWidget):
                 f"{entry['name']} {entry['year']}",
                 entry["papers"],
                 self,
+                badge_label=conference_badge_label(entry["name"]),
             )
             item.activated.connect(self.dataset_clicked.emit)
             item.menu_requested.connect(self._show_dataset_menu)
+            item.context_menu_requested.connect(
+                lambda conf, year, pos: self._show_dataset_menu(
+                    conf, year, pos, include_refresh=True
+                )
+            )
             item.refresh_requested.connect(self.refresh_dataset.emit)
             item.set_active(bool(entry.get("selected")))
+            item.set_compact(self._compact)
             self._dataset_items.append(item)
             self.dataset_layout.addWidget(item)
 
+    def has_dataset(self, conf_slug: str, year: int) -> bool:
+        return any(
+            item.conf_slug == conf_slug and item.year == year
+            for item in self._dataset_items
+        )
+
     def set_active_dataset(self, conf_slug: str, year: int) -> None:
         for item in self._dataset_items:
-            item.set_active(
-                item.conf_slug == conf_slug and item.year == year
-            )
+            item.set_active(item.conf_slug == conf_slug and item.year == year)
 
     def refresh_icons(self) -> None:
-        for button in (
-            self.all_papers_btn,
-            self.filters_btn,
-            self.settings_btn,
-        ):
+        for button in (self.all_papers_btn, self.filters_btn, self.settings_btn):
             button.refresh_icon()
         for item in self._dataset_items:
             item.refresh_icon()
-        self.collapse_btn.setIcon(themed_icon("chevron-left"))
-        self.collapse_btn.setIconSize(QSize(16, 16))
+        for button, name in (
+            (self.collapse_btn, "chevron-left"),
+            (self.expand_btn, "chevron-right"),
+            (self.add_dataset_btn, "plus"),
+        ):
+            button.setIcon(themed_icon(name))
 
     def _show_dataset_menu(
-        self, conf_slug: str, year: int, position: QPoint
+        self,
+        conf_slug: str,
+        year: int,
+        position: QPoint,
+        include_refresh: bool = False,
     ) -> None:
         menu = QMenu(self)
+        refresh_action = (
+            menu.addAction(tr("Refresh dataset")) if include_refresh else None
+        )
         open_action = menu.addAction(tr("Open in folder"))
         delete_action = menu.addAction(tr("Delete dataset"))
         chosen = menu.exec(position)
-        if chosen == open_action:
+        if chosen is None:
+            return
+        if chosen == refresh_action:
+            self.refresh_dataset.emit(conf_slug, year)
+        elif chosen == open_action:
             self.open_dataset_folder.emit(conf_slug, year)
         elif chosen == delete_action:
             self.delete_dataset.emit(conf_slug, year)
 
-    def _apply_compact_layout(self) -> None:
-        width = self.width()
-        self.brand_label.setVisible(width >= 210)
-        self.section_label.setVisible(width >= 190)
-        if width < 210:
-            self.root_layout.setContentsMargins(10, 14, 8, 12)
-        else:
-            self.root_layout.setContentsMargins(18, 18, 14, 16)
-
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._apply_compact_layout()
+        self.set_compact(self.width() < SIDEBAR_SNAP_WIDTH)
 
 
 class SearchField(QFrame):
@@ -418,7 +588,6 @@ class SearchField(QFrame):
 class WorkspaceHeader(QFrame):
     filter_clicked = pyqtSignal()
     filter_removed = pyqtSignal(int)
-    sidebar_toggle_clicked = pyqtSignal()
     details_toggle_clicked = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -430,15 +599,6 @@ class WorkspaceHeader(QFrame):
 
         title_row = QHBoxLayout()
         title_row.setSpacing(12)
-        self.sidebar_toggle_btn = QToolButton()
-        self.sidebar_toggle_btn.setObjectName("iconButton")
-        self.sidebar_toggle_btn.setIcon(themed_icon("chevron-right"))
-        self.sidebar_toggle_btn.setIconSize(QSize(16, 16))
-        self.sidebar_toggle_btn.setToolTip(tr("Show sidebar"))
-        self.sidebar_toggle_btn.setVisible(False)
-        self.sidebar_toggle_btn.clicked.connect(
-            self.sidebar_toggle_clicked.emit
-        )
         title_block = QVBoxLayout()
         title_block.setSpacing(4)
         self.title_label = QLabel("PaperSpider")
@@ -464,7 +624,6 @@ class WorkspaceHeader(QFrame):
         self.filter_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.filter_btn.clicked.connect(self.filter_clicked.emit)
         self.refresh_filter_icon()
-        title_row.addWidget(self.sidebar_toggle_btn)
         title_row.addLayout(title_block, stretch=1)
         title_row.addWidget(self.search_field)
         title_row.addWidget(self.filter_btn)
@@ -488,9 +647,6 @@ class WorkspaceHeader(QFrame):
     def set_dataset(self, title: str, subtitle: str) -> None:
         self.title_label.setText(title)
         self.subtitle_label.setText(subtitle)
-
-    def set_sidebar_hidden(self, hidden: bool) -> None:
-        self.sidebar_toggle_btn.setVisible(hidden)
 
     def set_details_hidden(self, hidden: bool) -> None:
         self.details_toggle_btn.setVisible(hidden)
@@ -536,6 +692,8 @@ class WorkspaceHeader(QFrame):
         if configs:
             text = f"{text} ({len(configs)})"
         self.filter_btn.setText(text)
+        self.filter_btn.setProperty("active", bool(configs))
+        _repolish(self.filter_btn)
 
     def refresh_filter_icon(self) -> None:
         self.filter_btn.setIcon(themed_icon("filter"))
@@ -544,14 +702,12 @@ class WorkspaceHeader(QFrame):
     def refresh_icons(self) -> None:
         self.search_field.refresh_icon()
         self.refresh_filter_icon()
-        self.sidebar_toggle_btn.setIcon(themed_icon("chevron-right"))
-        self.sidebar_toggle_btn.setIconSize(QSize(16, 16))
         self.details_toggle_btn.setIcon(themed_icon("chevron-left"))
         self.details_toggle_btn.setIconSize(QSize(16, 16))
 
 
 class DetailsPanel(QWidget):
-    download_abstract_clicked = pyqtSignal()
+    abstract_action_clicked = pyqtSignal()
     open_pdf_clicked = pyqtSignal()
     copy_bib_clicked = pyqtSignal()
     reveal_pdf_clicked = pyqtSignal()
@@ -560,6 +716,7 @@ class DetailsPanel(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setObjectName("detailsPanel")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setMinimumWidth(360)
         layout = QVBoxLayout()
         layout.setContentsMargins(26, 18, 26, 12)
@@ -577,10 +734,10 @@ class DetailsPanel(QWidget):
         breadcrumb_row.setContentsMargins(0, 0, 0, 0)
         breadcrumb_row.addWidget(self.breadcrumb_label, stretch=1)
         breadcrumb_row.addWidget(self.close_btn)
-        self.title_label = QLabel(tr("No paper selected"))
+        self.title_label = QLabel()
         self.title_label.setObjectName("paperTitle")
         self.title_label.setWordWrap(True)
-        self.authors_label = QLabel(tr("Select a row to preview details."))
+        self.authors_label = QLabel()
         self.authors_label.setObjectName("paperAuthors")
         self.authors_label.setWordWrap(True)
 
@@ -610,16 +767,16 @@ class DetailsPanel(QWidget):
         abstract_header = QHBoxLayout()
         abstract_title = QLabel(tr("Abstract"))
         abstract_title.setObjectName("sectionTitle")
-        self.download_abstract_btn = QToolButton()
-        self.download_abstract_btn.setObjectName("sectionAction")
-        self.download_abstract_btn.setText(tr("Copy"))
-        self.download_abstract_btn.setToolTip(tr("Download abstract"))
-        self.download_abstract_btn.clicked.connect(
-            self.download_abstract_clicked.emit
+        self.abstract_action_btn = QToolButton()
+        self.abstract_action_btn.setObjectName("sectionAction")
+        self.abstract_action_btn.setText(tr("Copy"))
+        self.abstract_action_btn.setToolTip(tr("Download abstract"))
+        self.abstract_action_btn.clicked.connect(
+            self.abstract_action_clicked.emit
         )
         abstract_header.addWidget(abstract_title)
         abstract_header.addStretch(1)
-        abstract_header.addWidget(self.download_abstract_btn)
+        abstract_header.addWidget(self.abstract_action_btn)
 
         self.abstract_text = QTextEdit()
         self.abstract_text.setObjectName("abstractText")
@@ -629,36 +786,56 @@ class DetailsPanel(QWidget):
         )
         self.abstract_text.setFrameShape(QFrame.Shape.NoFrame)
 
-        self.local_files_container = QWidget()
-        local_files_layout = QVBoxLayout()
-        local_files_layout.setContentsMargins(0, 0, 0, 0)
-        local_files_layout.setSpacing(8)
-        files_title = QLabel(tr("Local files"))
-        files_title.setObjectName("sectionTitle")
         self.reveal_pdf_btn = QPushButton(tr("Show in folder"))
         self.reveal_pdf_btn.setObjectName("secondaryButton")
-        self.reveal_pdf_btn.setIcon(themed_icon("folder"))
-        self.reveal_pdf_btn.setIconSize(QSize(16, 16))
         self.reveal_pdf_btn.clicked.connect(self.reveal_pdf_clicked.emit)
-        local_files_layout.addWidget(files_title)
-        local_files_layout.addWidget(self.reveal_pdf_btn)
-        self.local_files_container.setLayout(local_files_layout)
 
         self.feedback_label = QLabel("")
         self.feedback_label.setObjectName("detailsFeedbackLabel")
         self.feedback_label.setWordWrap(True)
 
+        self.content_widget = QWidget()
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(10)
+        content_layout.addWidget(self.title_label)
+        content_layout.addWidget(self.authors_label)
+        content_layout.addWidget(self.tags_container)
+        content_layout.addSpacing(4)
+        content_layout.addLayout(actions)
+        content_layout.addSpacing(4)
+        content_layout.addWidget(divider)
+        content_layout.addLayout(abstract_header)
+        content_layout.addWidget(self.abstract_text, stretch=1)
+        content_layout.addWidget(self.reveal_pdf_btn)
+        content_layout.addWidget(self.feedback_label)
+        self.content_widget.setLayout(content_layout)
+
+        self.placeholder = QWidget()
+        placeholder_layout = QVBoxLayout()
+        placeholder_layout.setSpacing(6)
+        placeholder_layout.addStretch(2)
+        self.placeholder_icon = QLabel()
+        self.placeholder_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        placeholder_title = QLabel(tr("No paper selected"))
+        placeholder_title.setObjectName("placeholderTitle")
+        placeholder_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        placeholder_text = QLabel(tr("Select a row to preview details."))
+        placeholder_text.setObjectName("placeholderText")
+        placeholder_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        placeholder_text.setWordWrap(True)
+        placeholder_layout.addWidget(self.placeholder_icon)
+        placeholder_layout.addSpacing(4)
+        placeholder_layout.addWidget(placeholder_title)
+        placeholder_layout.addWidget(placeholder_text)
+        placeholder_layout.addStretch(3)
+        self.placeholder.setLayout(placeholder_layout)
+
         layout.addLayout(breadcrumb_row)
-        layout.addWidget(self.title_label)
-        layout.addWidget(self.authors_label)
-        layout.addWidget(self.tags_container)
-        layout.addLayout(actions)
-        layout.addWidget(divider)
-        layout.addLayout(abstract_header)
-        layout.addWidget(self.abstract_text, stretch=1)
-        layout.addWidget(self.local_files_container)
-        layout.addWidget(self.feedback_label)
+        layout.addWidget(self.content_widget, stretch=1)
+        layout.addWidget(self.placeholder, stretch=1)
         self.setLayout(layout)
+        self.refresh_icons()
         self.set_row(None)
 
     def refresh_icons(self) -> None:
@@ -666,6 +843,7 @@ class DetailsPanel(QWidget):
         self.close_btn.setIconSize(QSize(16, 16))
         self.reveal_pdf_btn.setIcon(themed_icon("folder"))
         self.reveal_pdf_btn.setIconSize(QSize(16, 16))
+        self.placeholder_icon.setPixmap(themed_icon("paper").pixmap(36, 36))
 
     def _set_tags(self, values: Sequence[str]) -> None:
         while self.tags_layout.count():
@@ -687,83 +865,42 @@ class DetailsPanel(QWidget):
         self.tags_container.setVisible(bool(values))
 
     def set_row(self, row: Optional[dict]) -> None:
+        self.content_widget.setVisible(bool(row))
+        self.placeholder.setVisible(not row)
+        self.breadcrumb_label.setVisible(bool(row))
         if not row:
-            self.breadcrumb_label.setText("")
-            self.title_label.setText(tr("No paper selected"))
-            self.authors_label.setText(tr("Select a row to preview details."))
-            self.abstract_text.clear()
-            self._set_tags([])
-            self.local_files_container.setVisible(False)
-            self.reveal_pdf_btn.setEnabled(False)
-            self.set_feedback("")
-            self._set_action_enabled(False, False, False, False)
-            self.download_abstract_btn.setText(tr("Copy"))
-            self.download_abstract_btn.setToolTip(tr("Download abstract"))
-            self.open_pdf_btn.setText(tr("Open PDF"))
-            self.copy_bib_btn.setText(tr("Copy BibTeX"))
             return
 
-        authors = row.get("authors_text") or tr("Unknown authors")
         track = str(row.get("track") or "")
         paper_type = str(row.get("paper_type") or "")
         category = (
             display_category(track, paper_type)
             if track or paper_type
-            else str(row.get("category_text") or tr("Uncategorized"))
+            else str(row.get("category_text") or "")
         )
-        keywords = row.get("keywords_text") or ""
-        abstract = row.get("abstract") or ""
-        pdf_path = row.get("pdf_path") or ""
+        keywords = str(row.get("keywords_text") or "")
+        abstract = str(row.get("abstract") or "")
+        pdf_path = row.get("pdf_path")
         conf = str(row.get("conf") or "").replace("_", " ").upper()
-        year = row.get("year") or ""
-
-        breadcrumb = f"{conf} {year}".strip()
-        if category:
-            breadcrumb = f"{breadcrumb} / {category}" if breadcrumb else category
-        self.breadcrumb_label.setText(breadcrumb)
-        self.title_label.setText(str(row.get("title") or tr("Untitled paper")))
-        self.authors_label.setText(str(authors))
-        tags = [
-            value.strip()
-            for value in str(keywords).split(",")
-            if value.strip()
-        ][:6]
-        if not tags:
-            tags = [category]
-        self._set_tags(tags)
-        self.abstract_text.setPlainText(str(abstract))
-        self.set_feedback("")
-        self.local_files_container.setVisible(bool(pdf_path))
-        self.reveal_pdf_btn.setEnabled(bool(pdf_path))
-        self.download_abstract_btn.setText(
-            tr("Copy") if abstract else tr("Download")
+        breadcrumb = " / ".join(
+            part for part in (f"{conf} {row.get('year') or ''}".strip(), category) if part
         )
-        self.download_abstract_btn.setToolTip(
+        self.breadcrumb_label.setText(breadcrumb)
+        self.title_label.setText(row_title(row) or tr("Untitled paper"))
+        self.authors_label.setText(str(row.get("authors_text") or tr("Unknown authors")))
+        self._set_tags([value.strip() for value in keywords.split(",") if value.strip()][:6])
+        self.abstract_text.setPlainText(abstract)
+        self.set_feedback("")
+        self.reveal_pdf_btn.setVisible(bool(pdf_path))
+        self.abstract_action_btn.setText(tr("Copy") if abstract else tr("Download"))
+        self.abstract_action_btn.setToolTip(
             tr("Copy abstract") if abstract else tr("Download abstract")
         )
-        self.open_pdf_btn.setText(
-            tr("Open PDF") if pdf_path else tr("Download PDF")
-        )
-        self.copy_bib_btn.setText(tr("Copy BibTeX"))
-        self._set_action_enabled(
-            True, True, True, bool(pdf_path)
-        )
+        self.open_pdf_btn.setText(tr("Open PDF") if pdf_path else tr("Download PDF"))
 
     def set_feedback(self, message: str) -> None:
         self.feedback_label.setText(message)
         self.feedback_label.setVisible(bool(message))
-
-    def _set_action_enabled(
-        self,
-        open_pdf: bool,
-        download_abstract: bool,
-        copy_bib: bool,
-        reveal_pdf: bool,
-    ) -> None:
-        self.open_pdf_btn.setEnabled(open_pdf)
-        self.download_abstract_btn.setEnabled(download_abstract)
-        self.copy_bib_btn.setEnabled(copy_bib)
-        self.reveal_pdf_btn.setEnabled(reveal_pdf)
 
 
 class EmptyStateWidget(QWidget):
@@ -805,11 +942,13 @@ class CollapsibleLogPanel(QFrame):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setObjectName("taskBar")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         self.log_view = QTextEdit()
+        self.log_view.setObjectName("taskLog")
         self.log_view.setReadOnly(True)
         self.log_view.setVisible(False)
         self.log_view.setMaximumHeight(180)
@@ -887,6 +1026,9 @@ class CollapsibleLogPanel(QFrame):
 
     def show_cancel(self, visible: bool) -> None:
         self.cancel_btn.setVisible(visible)
+
+    def expand_log(self) -> None:
+        self.toggle_btn.setChecked(True)
 
     def _set_log_visible(self, visible: bool) -> None:
         self.log_view.setVisible(visible)

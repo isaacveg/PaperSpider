@@ -17,6 +17,7 @@ from .conferences import available_conferences
 from .conferences.base import ConferenceBase
 from .datasets import YEAR_MAX, YEAR_MIN, scan_datasets
 from .export_utils import build_export_text
+from .filtering import matches_terms, query_terms, search_text
 from .storage import PaperStorage
 from .workspace_service import WorkspaceService, paper_from_row
 
@@ -185,19 +186,7 @@ def _optional_text(value: Any, name: str) -> Optional[str]:
 
 
 def _row_matches_terms(row: Mapping[str, Any], terms: Sequence[str]) -> bool:
-    if not terms:
-        return True
-    haystack = " ".join(
-        str(row.get(key) or "")
-        for key in (
-            "title",
-            "category_text",
-            "authors_text",
-            "abstract",
-            "keywords_text",
-        )
-    ).casefold()
-    return all(term in haystack for term in terms)
+    return not terms or matches_terms(search_text(row), terms)
 
 
 def _apply_file_flags(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -412,7 +401,7 @@ class PaperSpiderOperations:
                     continue
                 datasets.append((entry.conf_slug, entry.year, storage))
 
-        terms = query_text.casefold().split() if query_text else []
+        terms = query_terms(query_text) if query_text else []
         matches: List[dict] = []
         for dataset_conf, dataset_year, storage in datasets:
             try:

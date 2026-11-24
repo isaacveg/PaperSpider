@@ -13,7 +13,10 @@ from PyQt6.QtWidgets import QApplication, QFrame, QWidget
 from paper_spider.filtering import FilterConfig
 from paper_spider.ui.theme import Appearance, appearance_from_values, apply_theme, build_stylesheet
 from paper_spider.ui.workspace_widgets import (
+    SIDEBAR_MIN_WIDTH,
+    SIDEBAR_RAIL_WIDTH,
     AppSidebar,
+    conference_badge_label,
     CollapsibleLogPanel,
     DetailsPanel,
     WorkspaceHeader,
@@ -34,8 +37,8 @@ class WorkspaceWidgetsTests(unittest.TestCase):
     def test_details_panel_handles_empty_and_populated_rows(self) -> None:
         widget = DetailsPanel()
         widget.set_row(None)
-        self.assertIn("No paper selected", widget.title_label.text())
-        self.assertTrue(widget.local_files_container.isHidden())
+        self.assertFalse(widget.placeholder.isHidden())
+        self.assertTrue(widget.content_widget.isHidden())
 
         widget.set_row(
             {
@@ -55,8 +58,8 @@ class WorkspaceWidgetsTests(unittest.TestCase):
         self.assertIn("Alice, Bob", widget.authors_label.text())
         self.assertIn("ICLR 2025", widget.breadcrumb_label.text())
         self.assertIn("Detailed abstract", widget.abstract_text.toPlainText())
-        self.assertFalse(widget.local_files_container.isHidden())
-        self.assertTrue(widget.reveal_pdf_btn.isEnabled())
+        self.assertTrue(widget.placeholder.isHidden())
+        self.assertFalse(widget.reveal_pdf_btn.isHidden())
         chips = widget.findChildren(QFrame, "tagChip")
         self.assertEqual(2, len(chips))
 
@@ -65,7 +68,7 @@ class WorkspaceWidgetsTests(unittest.TestCase):
 
         self.assertEqual("primaryButton", widget.open_pdf_btn.objectName())
         self.assertEqual("secondaryButton", widget.copy_bib_btn.objectName())
-        self.assertEqual("sectionAction", widget.download_abstract_btn.objectName())
+        self.assertEqual("sectionAction", widget.abstract_action_btn.objectName())
         self.assertEqual("secondaryButton", widget.reveal_pdf_btn.objectName())
 
     def test_details_panel_switches_abstract_action_between_copy_and_download(self) -> None:
@@ -79,8 +82,8 @@ class WorkspaceWidgetsTests(unittest.TestCase):
                 "abstract_status": 1,
             }
         )
-        self.assertEqual("Copy", widget.download_abstract_btn.text())
-        self.assertTrue(widget.download_abstract_btn.isEnabled())
+        self.assertEqual("Copy", widget.abstract_action_btn.text())
+        self.assertTrue(widget.abstract_action_btn.isEnabled())
 
         widget.set_feedback("Abstract copied to clipboard.")
         self.assertIn("copied", widget.feedback_label.text())
@@ -94,7 +97,7 @@ class WorkspaceWidgetsTests(unittest.TestCase):
                 "abstract_status": 0,
             }
         )
-        self.assertEqual("Download", widget.download_abstract_btn.text())
+        self.assertEqual("Download", widget.abstract_action_btn.text())
 
     def test_sidebar_lists_datasets_and_emits_selection(self) -> None:
         widget = AppSidebar()
@@ -137,29 +140,69 @@ class WorkspaceWidgetsTests(unittest.TestCase):
         widget._dataset_items[0].refresh_btn.click()
         self.assertEqual([("iclr", 2025)], refreshed)
 
-    def test_sidebar_keeps_navigation_labels_when_narrow(self) -> None:
+    def test_sidebar_switches_between_expanded_and_icon_rail(self) -> None:
         widget = AppSidebar()
         widget.set_datasets(
             [
                 {
-                    "conf": "iclr",
-                    "name": "Very Long Conference Name",
+                    "conf": "usenix_security",
+                    "name": "USENIX Security",
                     "year": 2025,
                     "papers": 10,
                     "selected": True,
                 }
             ]
         )
-        widget.resize(150, 600)
+        widget.resize(SIDEBAR_RAIL_WIDTH, 600)
         widget.show()
         self.app.processEvents()
 
+        item = widget._dataset_items[0]
+        self.assertTrue(widget.is_compact())
         self.assertTrue(widget.brand_label.isHidden())
         self.assertTrue(widget.section_label.isHidden())
+        self.assertFalse(widget.expand_btn.isHidden())
+        self.assertEqual("", widget.all_papers_btn.text())
+        self.assertEqual("All papers", widget.all_papers_btn.toolTip())
+        self.assertFalse(item.badge_btn.isHidden())
+        self.assertTrue(item.main_btn.isHidden())
+        self.assertTrue(item.menu_btn.isHidden())
+
+        widget.resize(SIDEBAR_MIN_WIDTH, 600)
+        self.app.processEvents()
+
+        self.assertFalse(widget.is_compact())
+        self.assertFalse(widget.brand_label.isHidden())
+        self.assertFalse(widget.section_label.isHidden())
         self.assertEqual("All papers", widget.all_papers_btn.text())
-        self.assertEqual("Filters", widget.filters_btn.text())
-        self.assertIn("…", widget._dataset_items[0].main_btn.text())
+        self.assertTrue(item.badge_btn.isHidden())
+        self.assertFalse(item.menu_btn.isHidden())
         widget.close()
+
+    def test_dataset_text_does_not_reflow_when_hover_actions_appear(self) -> None:
+        widget = AppSidebar()
+        widget.set_datasets(
+            [
+                {"conf": "neurips", "name": "NeurIPS", "year": 2024, "papers": 1, "selected": False},
+            ]
+        )
+        widget.resize(SIDEBAR_MIN_WIDTH, 600)
+        widget.show()
+        self.app.processEvents()
+        item = widget._dataset_items[0]
+        before = (item.main_btn.width(), item.main_btn.text())
+
+        item._hovered = True
+        item._update_menu_visibility()
+        self.app.processEvents()
+
+        self.assertFalse(item.menu_btn.isHidden())
+        self.assertEqual(before, (item.main_btn.width(), item.main_btn.text()))
+        widget.close()
+
+    def test_conference_badge_label_is_short(self) -> None:
+        self.assertEqual("NeurIPS", conference_badge_label("NeurIPS"))
+        self.assertEqual("US", conference_badge_label("USENIX Security"))
 
     def test_dataset_menu_emits_open_and_delete_actions(self) -> None:
         widget = AppSidebar()
@@ -198,7 +241,7 @@ class WorkspaceWidgetsTests(unittest.TestCase):
         widget.filters_clicked.connect(lambda: events.append("filters"))
         widget.add_dataset_clicked.connect(lambda: events.append("add"))
         widget.settings_clicked.connect(lambda: events.append("settings"))
-        widget.collapse_clicked.connect(lambda: events.append("collapse"))
+        widget.toggle_compact_clicked.connect(lambda: events.append("toggle"))
 
         widget.all_papers_btn.click()
         widget.filters_btn.click()
@@ -207,7 +250,7 @@ class WorkspaceWidgetsTests(unittest.TestCase):
         widget.collapse_btn.click()
 
         self.assertEqual(
-            ["all", "filters", "add", "settings", "collapse"], events
+            ["all", "filters", "add", "settings", "toggle"], events
         )
 
     def test_details_panel_close_button_emits(self) -> None:
